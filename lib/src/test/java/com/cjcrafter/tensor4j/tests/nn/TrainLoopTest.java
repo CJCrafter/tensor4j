@@ -27,6 +27,7 @@ class TrainLoopTest {
 
     @Test
     void testMnistNetwork() throws IOException, URISyntaxException {
+        // === IMPLICIT GLOBAL ARENA, PERSISTS DURING ALL OF JVM RUN
         Tensor4j.manualSeed(115);
 
         System.out.println("Loading mnist dataset...");
@@ -54,6 +55,7 @@ class TrainLoopTest {
         Sampler sampler = new RandomSampler(dataset.size());
         DataLoader batcher = new DataLoader(dataset, 256, sampler);
 
+        // === IMPLICIT LOCAL SCOPE DONE, SINCE WE KNOW THE SCOPE
         try (var ignored = Tensor4j.noGrad()) {
             Tensor pred = model.forward(x_test);
             float accuracy = pred.argmax(1).eq(y_test.argmax(1)).mean().item();
@@ -64,6 +66,7 @@ class TrainLoopTest {
 
         for (int epoch = 0; epoch < 3; epoch++) {
             System.out.println("Starting epoch " + (epoch + 1));
+            // === AFTER A BATCH IS USED, WE CAN ELIMINATE IT???
             for (Tensor[] batch : batcher) {
                 batches++;
 
@@ -71,12 +74,14 @@ class TrainLoopTest {
                 Tensor pred = model.forward(batch[0]);
                 Tensor l = loss.forward(pred, batch[1]);
 
+                // === IMPLICIT LOCAL SCOPE DONE, SINCE WE KNOW THE SCOPE
                 try (var ignored = Tensor4j.noGrad()) {
                     l.backward();
                     optimizer.step();
                 }
 
                 // eval
+                // === IMPLICIT LOCAL SCOPE DONE, SINCE WE KNOW THE SCOPE
                 try (var ignored = Tensor4j.noGrad()) {
                     Tensor predTest = model.forward(x_test);
                     float accuracy = predTest.argmax(1).eq(y_test.argmax(1)).mean().item();

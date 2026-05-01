@@ -47,10 +47,8 @@ public class Tensor implements Cloneable {
     private final Shape shape;
     private final int offset;
 
-    // autograd impl... when requiresGrade==false, these objects will be null
     private final boolean requiresGrad;
-    private Tensor grad;
-    private TensorFunction gradFn;
+    private AutogradMeta meta; // lazily allocated; null when no grad has been touched
 
     Tensor(Storage storage, Shape shape, int offset, boolean requiresGrad) {
         Preconditions.checkNotNull(storage, "storage");
@@ -59,10 +57,21 @@ public class Tensor implements Cloneable {
         this.shape = shape;
         this.offset = offset;
         this.requiresGrad = requiresGrad;
+
+        // Increment the number of pointers to the storage, and decrement the
+        // pointer if it gets Garbage Collected
+        storage.incRef();
+        Tensor4j.onClean(this, storage::decRef);
     }
 
     Tensor(float[] data, Shape shape, int offset, boolean requiresGrad) {
         this(new HeapFloatStorage(data), shape, offset, requiresGrad);
+    }
+
+    private AutogradMeta meta() {
+        if (meta == null)
+            meta = new AutogradMeta();
+        return meta;
     }
 
     // ---- accessors ----
@@ -106,23 +115,24 @@ public class Tensor implements Cloneable {
     }
 
     public Tensor getGrad() {
-        return grad;
+        return meta == null ? null : meta.grad;
     }
 
     public TensorFunction getGradFn() {
-        return gradFn;
+        return meta == null ? null : meta.gradFn;
     }
 
     void setGradFn(TensorFunction fn) {
-        this.gradFn = fn;
+        meta().gradFn = fn;
     }
 
     public void zeroGrad() {
-        this.grad = null;
+        if (meta != null)
+            meta.grad = null;
     }
 
     private void checkInPlaceSafe() {
-        if (this.requiresGrad && this.gradFn != null)
+        if (this.requiresGrad && meta != null && meta.gradFn != null)
             throw new IllegalStateException(
                     "in-place operation on a tensor that is part of the computation graph");
         if (offset != 0 || data().length != shape.numel() || !isContiguous())
@@ -135,7 +145,7 @@ public class Tensor implements Cloneable {
             throw new IllegalStateException("backward() only supported on scalar tensors, got " + shape);
 
         // seed with dL/dL = 1
-        this.grad = new Tensor(new float[]{1f}, new Shape(1, 1), 0, false);
+        meta().grad = new Tensor(new float[]{1f}, new Shape(1, 1), 0, false);
 
         // build reverse-topological order of the forward graph so gradient is
         // fully accumulated from all paths before propagating further back.
@@ -145,23 +155,25 @@ public class Tensor implements Cloneable {
 
         for (int idx = topo.size() - 1; idx >= 0; idx--) {
             Tensor node = topo.get(idx);
-            if (node.gradFn == null) continue;
-            if (node.grad == null) continue; // unreachable from loss
+            AutogradMeta nm = node.meta;
+            if (nm == null || nm.gradFn == null) continue;
+            if (nm.grad == null) continue; // unreachable from loss
 
-            Tensor[] grads = node.gradFn.backward(node.grad);
-            Tensor[] inputs = node.gradFn.getInputs();
+            Tensor[] grads = nm.gradFn.backward(nm.grad);
+            Tensor[] inputs = nm.gradFn.getInputs();
             for (int i = 0; i < inputs.length; i++) {
                 Tensor input = inputs[i];
                 if (!input.requiresGrad) continue;
 
-                if (input.grad == null) {
+                AutogradMeta im = input.meta();
+                if (im.grad == null) {
                     // This is a little bit dangerous since the grad function
                     // is responsible for cloning these tensors.
-                    input.grad = grads[i];
+                    im.grad = grads[i];
                 } else {
                     // accumulate in-place, bypassing checkInPlaceSafe since
                     // grad tensors are never part of the forward graph
-                    Ops.binaryOp(ADD, input.grad, grads[i], input.grad.shape, input.grad.data());
+                    Ops.binaryOp(ADD, im.grad, grads[i], im.grad.shape, im.grad.data());
                 }
             }
         }
@@ -169,8 +181,9 @@ public class Tensor implements Cloneable {
 
     private static void buildTopo(Tensor node, Set<Tensor> visited, List<Tensor> out) {
         if (!visited.add(node)) return;
-        if (node.gradFn != null) {
-            for (Tensor input : node.gradFn.getInputs()) {
+        TensorFunction fn = node.meta == null ? null : node.meta.gradFn;
+        if (fn != null) {
+            for (Tensor input : fn.getInputs()) {
                 buildTopo(input, visited, out);
             }
         }
@@ -198,7 +211,7 @@ public class Tensor implements Cloneable {
     public Tensor transpose() {
         Tensor tensor = new Tensor(storage, shape.transpose(), offset, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.gradFn = new TransposeFn(this);
+            tensor.setGradFn(new TransposeFn(this));
         }
         return tensor;
     }
@@ -207,7 +220,7 @@ public class Tensor implements Cloneable {
         Shape newShape = shape.reshape(newDims);
         Tensor tensor = new Tensor(storage, newShape, offset, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.gradFn = new ViewFn(this);
+            tensor.setGradFn(new ViewFn(this));
         }
         return tensor;
     }
@@ -233,7 +246,7 @@ public class Tensor implements Cloneable {
 
         Tensor tensor = new Tensor(dst, new Shape(shape.dims()), 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.gradFn = new IdentityFn(this);
+            tensor.setGradFn(new IdentityFn(this));
         }
         return tensor;
     }
@@ -244,7 +257,7 @@ public class Tensor implements Cloneable {
         float[] src = data();
         Tensor tensor = new Tensor(Arrays.copyOf(src, src.length), shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.gradFn = new IdentityFn(this);
+            tensor.setGradFn(new IdentityFn(this));
         }
         return tensor;
     }
@@ -310,7 +323,7 @@ public class Tensor implements Cloneable {
 
         Tensor result = new Tensor(out, outShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new CatFn(dim, sizesAlongDim, tensors);
+            result.setGradFn(new CatFn(dim, sizesAlongDim, tensors));
         }
         return result;
     }
@@ -353,7 +366,7 @@ public class Tensor implements Cloneable {
 
         Tensor result = new Tensor(out, new Shape(newDims), 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new IndexSelectFn(this, dim, indices);
+            result.setGradFn(new IndexSelectFn(this, dim, indices));
         }
         return result;
     }
@@ -399,7 +412,7 @@ public class Tensor implements Cloneable {
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new MatmulFn(this, other);
+            result.setGradFn(new MatmulFn(this, other));
         }
         return result;
     }
@@ -412,7 +425,7 @@ public class Tensor implements Cloneable {
         float val = Ops.sum(this);
         Tensor result = new Tensor(new float[]{val}, new Shape(1, 1), 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new SumFn(this);
+            result.setGradFn(new SumFn(this));
         }
         return result;
     }
@@ -430,7 +443,7 @@ public class Tensor implements Cloneable {
 
         Tensor result = new Tensor(resultData, resultShape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new SumDimFn(this, dim);
+            result.setGradFn(new SumDimFn(this, dim));
         }
         return result;
     }
@@ -447,7 +460,7 @@ public class Tensor implements Cloneable {
 
         Tensor result = new Tensor(resultData, resultShape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new MaxDimFn(this, result, dim);
+            result.setGradFn(new MaxDimFn(this, result.detach(), dim));
         }
         return result;
     }
@@ -496,7 +509,7 @@ public class Tensor implements Cloneable {
         float val = Ops.mean(this);
         Tensor result = new Tensor(new float[]{val}, new Shape(1, 1), 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new MeanFn(this);
+            result.setGradFn(new MeanFn(this));
         }
         return result;
     }
@@ -511,7 +524,7 @@ public class Tensor implements Cloneable {
         Ops.unaryOp(TANH, this, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new TanhFn(this, result);
+            result.setGradFn(new TanhFn(this, result.detach()));
         }
         return result;
     }
@@ -521,7 +534,7 @@ public class Tensor implements Cloneable {
         Ops.unaryOp(ABS, this, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new AbsFn(this);
+            result.setGradFn(new AbsFn(this));
         }
         return result;
     }
@@ -537,7 +550,7 @@ public class Tensor implements Cloneable {
         Ops.unaryOp(EXP, this, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new ExpFn(this, result);
+            result.setGradFn(new ExpFn(this, result.detach()));
         }
         return result;
     }
@@ -553,7 +566,7 @@ public class Tensor implements Cloneable {
         Ops.unaryOp(LOG, this, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new LogFn(this);
+            result.setGradFn(new LogFn(this));
         }
         return result;
     }
@@ -569,7 +582,7 @@ public class Tensor implements Cloneable {
         Ops.unaryOp(SQRT, this, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new SqrtFn(this, result);
+            result.setGradFn(new SqrtFn(this, result.detach()));
         }
         return result;
     }
@@ -586,7 +599,7 @@ public class Tensor implements Cloneable {
         Ops.binaryOp(MUL, this, this, shape, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new SquareFn(this);
+            result.setGradFn(new SquareFn(this));
         }
         return result;
     }
@@ -611,7 +624,7 @@ public class Tensor implements Cloneable {
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new AddFn(this, other);
+            result.setGradFn(new AddFn(this, other));
         }
         return result;
     }
@@ -630,7 +643,7 @@ public class Tensor implements Cloneable {
         Ops.binaryOpConst(ADD, this, other, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new AddConstFn(this, other);
+            result.setGradFn(new AddConstFn(this, other));
         }
         return result;
     }
@@ -651,7 +664,7 @@ public class Tensor implements Cloneable {
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new SubFn(this, other);
+            result.setGradFn(new SubFn(this, other));
         }
         return result;
     }
@@ -670,7 +683,7 @@ public class Tensor implements Cloneable {
         Ops.binaryOpConst(SUB, this, other, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new AddConstFn(this, other);
+            result.setGradFn(new AddConstFn(this, other));
         }
         return result;
     }
@@ -686,7 +699,7 @@ public class Tensor implements Cloneable {
         Ops.rbinaryOpConst(SUB, other, this, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new SubRConstFn(other, this);
+            result.setGradFn(new SubRConstFn(other, this));
         }
         return result;
     }
@@ -707,7 +720,7 @@ public class Tensor implements Cloneable {
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new MulFn(this, other);
+            result.setGradFn(new MulFn(this, other));
         }
         return result;
     }
@@ -726,7 +739,7 @@ public class Tensor implements Cloneable {
         Ops.binaryOpConst(MUL, this, other, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new MulConstFn(this, other);
+            result.setGradFn(new MulConstFn(this, other));
         }
         return result;
     }
@@ -747,7 +760,7 @@ public class Tensor implements Cloneable {
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new DivFn(this, other);
+            result.setGradFn(new DivFn(this, other));
         }
         return result;
     }
@@ -766,7 +779,7 @@ public class Tensor implements Cloneable {
         Ops.binaryOpConst(DIV, this, other, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new DivConstFn(this, other);
+            result.setGradFn(new DivConstFn(this, other));
         }
         return result;
     }
@@ -782,7 +795,7 @@ public class Tensor implements Cloneable {
         Ops.rbinaryOpConst(DIV, other, this, resultData);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new DivRConstFn(other, this);
+            result.setGradFn(new DivRConstFn(other, this));
         }
         return result;
     }
@@ -802,7 +815,7 @@ public class Tensor implements Cloneable {
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new MaxFn(this, other);
+            result.setGradFn(new MaxFn(this, other));
         }
         return result;
     }
@@ -823,7 +836,7 @@ public class Tensor implements Cloneable {
         // at all or make it contiguous... we just need the shape to match exactly.
         Tensor tensor = new Tensor(resultData, new Shape(shape.dims(), shape.strides()), 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.gradFn = new MaxConstFn(this, other);
+            tensor.setGradFn(new MaxConstFn(this, other));
         }
         return tensor;
     }
@@ -843,7 +856,7 @@ public class Tensor implements Cloneable {
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
-            result.gradFn = new MinFn(this, other);
+            result.setGradFn(new MinFn(this, other));
         }
         return result;
     }
@@ -862,7 +875,7 @@ public class Tensor implements Cloneable {
         Ops.binaryOpConst(MIN, this, other, resultData);
         Tensor tensor = new Tensor(resultData, new Shape(shape.dims(), shape.strides()), 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.gradFn = new MinConstFn(this, other);
+            tensor.setGradFn(new MinConstFn(this, other));
         }
         return tensor;
     }

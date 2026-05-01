@@ -2,6 +2,7 @@ package com.cjcrafter.tensor4j;
 
 import com.cjcrafter.tensor4j.util.SafeAutoClosable;
 
+import java.lang.ref.Cleaner;
 import java.util.SplittableRandom;
 
 /**
@@ -10,8 +11,21 @@ import java.util.SplittableRandom;
  */
 public final class Tensor4j {
 
+    /**
+     *
+     */
     private static final ThreadLocal<Boolean> NO_GRAD = ThreadLocal.withInitial(() -> false);
+
+    /**
+     *
+     */
     private static final ThreadLocal<SplittableRandom> RANDOM = ThreadLocal.withInitial(SplittableRandom::new);
+
+    /**
+     *
+     */
+    private static final Cleaner CLEANER = Cleaner.create();
+
 
     private Tensor4j() {
     }
@@ -91,6 +105,14 @@ public final class Tensor4j {
         boolean prev = NO_GRAD.get();
         NO_GRAD.set(true);
         return () -> NO_GRAD.set(prev);
+    }
+
+    /**
+     * Registers a cleanup action to run when {@code referent} becomes unreachable.
+     * The {@code action} must not strongly reference {@code referent}.
+     */
+    public static Cleaner.Cleanable onClean(Object referent, Runnable action) {
+        return CLEANER.register(referent, action);
     }
 
     /**

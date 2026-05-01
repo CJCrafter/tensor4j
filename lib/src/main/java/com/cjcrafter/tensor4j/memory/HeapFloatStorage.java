@@ -38,4 +38,11 @@ public final class HeapFloatStorage extends HeapStorage {
     public long sizeBytes() {
         return (long) array.length * Float.BYTES;
     }
+
+    @Override
+    protected void delete() {
+        // let the GC handle this... big arrays will create pressure for the GC
+        // to deal with anyway, so this is fine as a no-op
+        // array = null;
+    }
 }
