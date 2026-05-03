@@ -1,6 +1,9 @@
-package com.cjcrafter.tensor4j.ops;
+package com.cjcrafter.tensor4j.backend.cpu;
 
+import com.cjcrafter.tensor4j.Device;
 import com.cjcrafter.tensor4j.Shape;
+import com.cjcrafter.tensor4j.backend.F32KernelTable;
+import com.cjcrafter.tensor4j.memory.Storage;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
@@ -12,9 +15,18 @@ import java.nio.ByteOrder;
 import static jdk.incubator.vector.VectorOperators.*;
 
 /**
- * Compute kernels operating on a {@link MemorySegment} of floats.
+ * F32 CPU kernels backed by {@link MemorySegment}.
  */
-public final class SegmentKernels {
+public final class CpuF32Kernels implements F32KernelTable {
+
+    private static final CpuF32Kernels INSTANCE = new CpuF32Kernels();
+
+    public static CpuF32Kernels instance() {
+        return INSTANCE;
+    }
+
+    private CpuF32Kernels() {
+    }
 
     private static final int REGISTER_BLOCKS = 8;
     private static final VectorSpecies<Float> SPECIES = FloatVector.SPECIES_PREFERRED;
@@ -24,7 +36,13 @@ public final class SegmentKernels {
     private static final ValueLayout.OfFloat F32 = ValueLayout.JAVA_FLOAT;
     private static final long F32_BYTES = 4L;
 
-    private SegmentKernels() {
+    private static MemorySegment seg(Storage s) {
+        return s.segment();
+    }
+
+    @Override
+    public Device device() {
+        return Device.cpu();
     }
 
     private static float applyScalarUnary(VectorOperators.Unary op, float a) {
@@ -80,9 +98,17 @@ public final class SegmentKernels {
     private static final int J_TILE = 128;
     private static final int I_TILE = 256;
 
-    public static void matmul(MemorySegment a, long aOff, int m, int k,
-                              MemorySegment b, long bOff, int n,
-                              MemorySegment c, long cOff) {
+    @Override
+    public void matmul(Storage aS, int aOffI, int m, int k,
+                       Storage bS, int bOffI, int n,
+                       Storage cS, int cOffI) {
+        MemorySegment a = seg(aS);
+        MemorySegment b = seg(bS);
+        MemorySegment c = seg(cS);
+        long aOff = aOffI;
+        long bOff = bOffI;
+        long cOff = cOffI;
+
         float[] bPacked = new float[K_TILE * J_TILE];
         MemorySegment bPackedSeg = MemorySegment.ofArray(bPacked);
 
@@ -232,7 +258,10 @@ public final class SegmentKernels {
     // --- REDUCTIONS --- //
     // ------------------ //
 
-    public static float sum(MemorySegment a, long aOff, int len) {
+    @Override
+    public float sum(Storage aS, int aOffI, int len) {
+        MemorySegment a = seg(aS);
+        long aOff = aOffI;
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
@@ -277,7 +306,10 @@ public final class SegmentKernels {
         return sum;
     }
 
-    public static float mean(MemorySegment a, long aOff, int len) {
+    @Override
+    public float mean(Storage aS, int aOffI, int len) {
+        MemorySegment a = seg(aS);
+        long aOff = aOffI;
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
@@ -353,7 +385,11 @@ public final class SegmentKernels {
         return (sum - comp) / len;
     }
 
-    public static void sumDim(MemorySegment a, long aOff, int[] dims, int dim, MemorySegment out) {
+    @Override
+    public void sumDim(Storage aS, int aOffI, int[] dims, int dim, Storage outS) {
+        MemorySegment a = seg(aS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
         int ndim = dims.length;
 
         int outer = 1;
@@ -388,7 +424,11 @@ public final class SegmentKernels {
         }
     }
 
-    public static void maxDim(MemorySegment a, long aOff, int[] dims, int dim, MemorySegment out) {
+    @Override
+    public void maxDim(Storage aS, int aOffI, int[] dims, int dim, Storage outS) {
+        MemorySegment a = seg(aS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
         int ndim = dims.length;
 
         int outer = 1;
@@ -416,7 +456,11 @@ public final class SegmentKernels {
         }
     }
 
-    public static void argmaxDim(MemorySegment a, long aOff, int[] dims, int dim, MemorySegment out) {
+    @Override
+    public void argmaxDim(Storage aS, int aOffI, int[] dims, int dim, Storage outS) {
+        MemorySegment a = seg(aS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
         int ndim = dims.length;
 
         int outer = 1;
@@ -448,9 +492,14 @@ public final class SegmentKernels {
     // --- UNARY ELEMENT-WISE --- //
     // -------------------------- //
 
-    public static void unaryContiguous(VectorOperators.Unary op,
-                                       MemorySegment a, long aOff,
-                                       MemorySegment out, long outOff, int len) {
+    @Override
+    public void unary(VectorOperators.Unary op,
+                      Storage aS, int aOffI,
+                      Storage outS, int outOffI, int len) {
+        MemorySegment a = seg(aS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
+        long outOff = outOffI;
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
@@ -493,10 +542,17 @@ public final class SegmentKernels {
     // --- BINARY ELEMENT-WISE --- //
     // --------------------------- //
 
-    public static void binaryContiguous(VectorOperators.Binary op,
-                                        MemorySegment a, long aOff,
-                                        MemorySegment b, long bOff,
-                                        MemorySegment out, long outOff, int len) {
+    @Override
+    public void binary(VectorOperators.Binary op,
+                       Storage aS, int aOffI,
+                       Storage bS, int bOffI,
+                       Storage outS, int outOffI, int len) {
+        MemorySegment a = seg(aS);
+        MemorySegment b = seg(bS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
+        long bOff = bOffI;
+        long outOff = outOffI;
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
@@ -546,17 +602,14 @@ public final class SegmentKernels {
         }
     }
 
-    public static void binaryContiguous(VectorOperators.Binary op,
-                                        MemorySegment a, long aOff,
-                                        MemorySegment b, long bOff,
-                                        MemorySegment out, int len) {
-        binaryContiguous(op, a, aOff, b, bOff, out, 0, len);
-    }
-
-    public static void binaryConst(VectorOperators.Binary op,
-                                   MemorySegment a, long aOff,
-                                   float b,
-                                   MemorySegment out, int len) {
+    @Override
+    public void binaryConst(VectorOperators.Binary op,
+                            Storage aS, int aOffI, float b,
+                            Storage outS, int outOffI, int len) {
+        MemorySegment a = seg(aS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
+        long outOff = outOffI;
         var vb = FloatVector.broadcast(SPECIES, b);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
@@ -565,7 +618,7 @@ public final class SegmentKernels {
 
         for (; i < blockBound; i += step) {
             long aBase = (aOff + i) * F32_BYTES;
-            long oBase = (long) i * F32_BYTES;
+            long oBase = (outOff + i) * F32_BYTES;
             var va0 = FloatVector.fromMemorySegment(SPECIES, a, aBase, NATIVE);
             var va1 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes, NATIVE);
             var va2 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 2L, NATIVE);
@@ -587,19 +640,23 @@ public final class SegmentKernels {
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
             var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE);
-            va.lanewise(op, vb).intoMemorySegment(out, (long) i * F32_BYTES, NATIVE);
+            va.lanewise(op, vb).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE);
         }
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
             var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE, mask);
-            va.lanewise(op, vb).intoMemorySegment(out, (long) i * F32_BYTES, NATIVE, mask);
+            va.lanewise(op, vb).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE, mask);
         }
     }
 
-    public static void rbinaryConst(VectorOperators.Binary op,
-                                    float a,
-                                    MemorySegment b, long bOff,
-                                    MemorySegment out, int len) {
+    @Override
+    public void rbinaryConst(VectorOperators.Binary op,
+                             float a, Storage bS, int bOffI,
+                             Storage outS, int outOffI, int len) {
+        MemorySegment b = seg(bS);
+        MemorySegment out = seg(outS);
+        long bOff = bOffI;
+        long outOff = outOffI;
         var va = FloatVector.broadcast(SPECIES, a);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
@@ -608,7 +665,7 @@ public final class SegmentKernels {
 
         for (; i < blockBound; i += step) {
             long bBase = (bOff + i) * F32_BYTES;
-            long oBase = (long) i * F32_BYTES;
+            long oBase = (outOff + i) * F32_BYTES;
             var vb0 = FloatVector.fromMemorySegment(SPECIES, b, bBase, NATIVE);
             var vb1 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes, NATIVE);
             var vb2 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 2L, NATIVE);
@@ -630,19 +687,25 @@ public final class SegmentKernels {
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
             var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + i) * F32_BYTES, NATIVE);
-            va.lanewise(op, vb).intoMemorySegment(out, (long) i * F32_BYTES, NATIVE);
+            va.lanewise(op, vb).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE);
         }
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
             var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + i) * F32_BYTES, NATIVE, mask);
-            va.lanewise(op, vb).intoMemorySegment(out, (long) i * F32_BYTES, NATIVE, mask);
+            va.lanewise(op, vb).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE, mask);
         }
     }
 
-    public static void binaryBroadcast(VectorOperators.Binary op,
-                                       MemorySegment a, int[] aStrides, long aOff,
-                                       MemorySegment b, int[] bStrides, long bOff,
-                                       MemorySegment out, Shape resultShape) {
+    @Override
+    public void binaryBroadcast(VectorOperators.Binary op,
+                                Storage aS, int[] aStrides, int aOffI,
+                                Storage bS, int[] bStrides, int bOffI,
+                                Storage outS, Shape resultShape) {
+        MemorySegment a = seg(aS);
+        MemorySegment b = seg(bS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
+        long bOff = bOffI;
         int ndim = resultShape.dimensions();
         int numel = resultShape.numel();
         int[] indices = new int[ndim];
@@ -669,10 +732,17 @@ public final class SegmentKernels {
     // --- COMPARISON ELEMENT-WISE --- //
     // ------------------------------- //
 
-    public static void compareContiguous(VectorOperators.Comparison op,
-                                         MemorySegment a, long aOff,
-                                         MemorySegment b, long bOff,
-                                         MemorySegment out, long outOff, int len) {
+    @Override
+    public void compare(VectorOperators.Comparison op,
+                        Storage aS, int aOffI,
+                        Storage bS, int bOffI,
+                        Storage outS, int outOffI, int len) {
+        MemorySegment a = seg(aS);
+        MemorySegment b = seg(bS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
+        long bOff = bOffI;
+        long outOff = outOffI;
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
@@ -700,17 +770,14 @@ public final class SegmentKernels {
         }
     }
 
-    public static void compareContiguous(VectorOperators.Comparison op,
-                                         MemorySegment a, long aOff,
-                                         MemorySegment b, long bOff,
-                                         MemorySegment out, int len) {
-        compareContiguous(op, a, aOff, b, bOff, out, 0, len);
-    }
-
-    public static void compareConst(VectorOperators.Comparison op,
-                                    MemorySegment a, long aOff,
-                                    float b,
-                                    MemorySegment out, int len) {
+    @Override
+    public void compareConst(VectorOperators.Comparison op,
+                             Storage aS, int aOffI, float b,
+                             Storage outS, int outOffI, int len) {
+        MemorySegment a = seg(aS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
+        long outOff = outOffI;
         var vb = FloatVector.broadcast(SPECIES, b);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
@@ -720,26 +787,32 @@ public final class SegmentKernels {
             for (int r = 0; r < REGISTER_BLOCKS; r++) {
                 int off = i + SPECIES.length() * r;
                 var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + off) * F32_BYTES, NATIVE);
-                ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (long) off * F32_BYTES, NATIVE);
+                ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (outOff + off) * F32_BYTES, NATIVE);
             }
         }
 
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
             var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE);
-            ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (long) i * F32_BYTES, NATIVE);
+            ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE);
         }
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
             var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE, mask);
-            ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (long) i * F32_BYTES, NATIVE, mask);
+            ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE, mask);
         }
     }
 
-    public static void compareBroadcast(VectorOperators.Comparison op,
-                                        MemorySegment a, int[] aStrides, long aOff,
-                                        MemorySegment b, int[] bStrides, long bOff,
-                                        MemorySegment out, Shape resultShape) {
+    @Override
+    public void compareBroadcast(VectorOperators.Comparison op,
+                                 Storage aS, int[] aStrides, int aOffI,
+                                 Storage bS, int[] bStrides, int bOffI,
+                                 Storage outS, Shape resultShape) {
+        MemorySegment a = seg(aS);
+        MemorySegment b = seg(bS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
+        long bOff = bOffI;
         int ndim = resultShape.dimensions();
         int numel = resultShape.numel();
         int[] indices = new int[ndim];
@@ -766,11 +839,20 @@ public final class SegmentKernels {
     // --- TERNARY ELEMENT-WISE --- //
     // ---------------------------- //
 
-    public static void ternaryContiguous(VectorOperators.Ternary op,
-                                         MemorySegment a, long aOff,
-                                         MemorySegment b, long bOff,
-                                         MemorySegment c, long cOff,
-                                         MemorySegment out, long outOff, int len) {
+    @Override
+    public void ternary(VectorOperators.Ternary op,
+                        Storage aS, int aOffI,
+                        Storage bS, int bOffI,
+                        Storage cS, int cOffI,
+                        Storage outS, int outOffI, int len) {
+        MemorySegment a = seg(aS);
+        MemorySegment b = seg(bS);
+        MemorySegment c = seg(cS);
+        MemorySegment out = seg(outS);
+        long aOff = aOffI;
+        long bOff = bOffI;
+        long cOff = cOffI;
+        long outOff = outOffI;
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
@@ -810,14 +892,23 @@ public final class SegmentKernels {
     // --- FUSED ADAMW  --- //
     // -------------------- //
 
-    public static void adamw(MemorySegment p, long pOff,
-                             MemorySegment g, long gOff,
-                             MemorySegment m, long mOff,
-                             MemorySegment v, long vOff,
-                             int len,
-                             float lr, float beta1, float beta2,
-                             float biasCorr1, float biasCorr2,
-                             float weightDecay, float eps) {
+    @Override
+    public void adamw(Storage pS, int pOffI,
+                      Storage gS, int gOffI,
+                      Storage mS, int mOffI,
+                      Storage vS, int vOffI,
+                      int len,
+                      float lr, float beta1, float beta2,
+                      float biasCorr1, float biasCorr2,
+                      float weightDecay, float eps) {
+        MemorySegment p = seg(pS);
+        MemorySegment g = seg(gS);
+        MemorySegment m = seg(mS);
+        MemorySegment v = seg(vS);
+        long pOff = pOffI;
+        long gOff = gOffI;
+        long mOff = mOffI;
+        long vOff = vOffI;
 
         var vBeta1      = FloatVector.broadcast(SPECIES, beta1);
         var vOneMinusB1 = FloatVector.broadcast(SPECIES, 1f - beta1);

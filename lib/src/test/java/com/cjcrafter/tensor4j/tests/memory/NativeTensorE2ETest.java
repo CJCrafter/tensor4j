@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Exercises the full pipeline: TensorBuilder allocator() -> NativeStorage tensors,
- * dispatched through Ops -> SegmentKernels, and verifies parity with the heap path.
+ * dispatched through Ops -> CpuBackend -> CpuF32Kernels.
  */
 class NativeTensorE2ETest {
 

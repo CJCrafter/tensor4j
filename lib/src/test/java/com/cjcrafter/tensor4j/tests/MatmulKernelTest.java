@@ -1,8 +1,8 @@
 package com.cjcrafter.tensor4j.tests;
 
 import com.cjcrafter.tensor4j.DType;
+import com.cjcrafter.tensor4j.backend.cpu.CpuF32Kernels;
 import com.cjcrafter.tensor4j.memory.NativeStorage;
-import com.cjcrafter.tensor4j.ops.SegmentKernels;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -13,13 +13,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MatmulKernelTest {
 
-    private static MemorySegment seg(float... data) {
+    private static NativeStorage store(float... data) {
         NativeStorage s = NativeStorage.allocate(DType.F32, data.length);
         MemorySegment seg = s.segment();
         for (int i = 0; i < data.length; i++)
             seg.setAtIndex(ValueLayout.JAVA_FLOAT, i, data[i]);
         s.incRef();
-        return seg;
+        return s;
     }
 
     private static float[] toArray(MemorySegment s, int n) {
@@ -50,15 +50,15 @@ class MatmulKernelTest {
             }
         }
 
-        MemorySegment aSeg = seg(a);
-        MemorySegment bSeg = seg(b);
+        NativeStorage aStore = store(a);
+        NativeStorage bStore = store(b);
         NativeStorage outStore = NativeStorage.allocate(DType.F32, 16);
         outStore.incRef();
         // zero-init c (matmul accumulates into c)
         for (int i = 0; i < 16; i++)
             outStore.segment().setAtIndex(ValueLayout.JAVA_FLOAT, i, 0f);
 
-        SegmentKernels.matmul(aSeg, 0, 8, 3, bSeg, 0, 2, outStore.segment(), 0);
+        CpuF32Kernels.instance().matmul(aStore, 0, 8, 3, bStore, 0, 2, outStore, 0);
 
         float[] actual = toArray(outStore.segment(), 16);
         for (int i = 0; i < 16; i++) {

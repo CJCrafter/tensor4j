@@ -3,7 +3,7 @@ package com.cjcrafter.tensor4j.nn.optimizers;
 import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.Tensor4j;
 import com.cjcrafter.tensor4j.TensorBuilder;
-import com.cjcrafter.tensor4j.ops.SegmentKernels;
+import com.cjcrafter.tensor4j.backend.Backends;
 
 import java.util.Collection;
 import java.util.IdentityHashMap;
@@ -67,11 +67,11 @@ public class Adam implements Optimizer {
             Tensor v = secondMoment.computeIfAbsent(param,
                     p -> TensorBuilder.builder().like(p).zeros());
 
-            SegmentKernels.adamw(
-                    param.getStorage().segment(), param.getOffset(),
-                    grad.getStorage().segment(), grad.getOffset(),
-                    m.getStorage().segment(), m.getOffset(),
-                    v.getStorage().segment(), v.getOffset(),
+            Backends.forDevice(param.device()).f32Kernels().adamw(
+                    param.getStorage(), param.getOffset(),
+                    grad.getStorage(), grad.getOffset(),
+                    m.getStorage(), m.getOffset(),
+                    v.getStorage(), v.getOffset(),
                     param.getShape().numel(),
                     lr, beta1, beta2,
                     biasCorr1, biasCorr2,
