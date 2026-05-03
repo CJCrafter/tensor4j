@@ -1,6 +1,12 @@
 package com.cjcrafter.tensor4j;
 
-import java.util.Arrays;
+import com.cjcrafter.tensor4j.memory.Allocator;
+import com.cjcrafter.tensor4j.memory.CpuAllocator;
+import com.cjcrafter.tensor4j.memory.NativeStorage;
+import com.google.common.base.Preconditions;
+
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.random.RandomGenerator;
 
 /**
@@ -8,28 +14,33 @@ import java.util.random.RandomGenerator;
  */
 public final class TensorBuilder {
 
-    /**
-     * A functional interface for generating values to insert into a tensor.
-     *
-     * @see TensorBuilder#generate(Generator)
-     */
-    @FunctionalInterface
-    public interface Generator {
-        /**
-         * Responsible for generating 1 value
-         *
-         * @param shape The shape of the tensor being constructed.
-         * @param idx The contiguous idx of the element in the backing array.
-         * @return The generated value to insert into the tensor.
-         */
-        float generate(Shape shape, int idx);
-    }
-
-
     private Shape shape;
     private boolean requiresGrad;
+    private Allocator allocator = CpuAllocator.instance();
 
     TensorBuilder() {
+    }
+
+    /** Overrides the default {@link CpuAllocator} for this build. */
+    public TensorBuilder allocator(Allocator allocator) {
+        this.allocator = Preconditions.checkNotNull(allocator, "allocator");
+        return this;
+    }
+
+    private Tensor build(FloatGenerator gen) {
+        Preconditions.checkNotNull(shape, "shape");
+
+        int n = shape.numel();
+        NativeStorage ns = NativeStorage.allocate(allocator, DType.F32, n);
+        MemorySegment seg = ns.segment();
+        for (int i = 0; i < n; i++)
+            seg.setAtIndex(ValueLayout.JAVA_FLOAT, i, gen.at(i));
+        return new Tensor(ns, shape, 0, requiresGrad);
+    }
+
+    @FunctionalInterface
+    private interface FloatGenerator {
+        float at(int idx);
     }
 
     /**
@@ -40,8 +51,8 @@ public final class TensorBuilder {
      * @throws IllegalStateException if the shape was already set.
      */
     public TensorBuilder like(Tensor tensor) {
-        if (this.shape != null)
-            throw new IllegalStateException("shape already set");
+        Preconditions.checkState(shape == null, "shape already set");
+
         this.shape = tensor.getShape();
         return this;
     }
@@ -55,12 +66,9 @@ public final class TensorBuilder {
      * @throws IllegalStateException If the shape was already set.
      */
     public TensorBuilder shape(int... dims) {
-        if (this.shape != null)
-            throw new IllegalStateException("shape already set");
-        if (dims == null)
-            throw new IllegalArgumentException("Cannot use null dims");
-        if (dims.length == 0)
-            throw new IllegalArgumentException("Cannot use empty dims");
+        Preconditions.checkState(shape == null, "shape already set");
+        Preconditions.checkNotNull(dims, "dims");
+        Preconditions.checkArgument(dims.length >= 2, "Must use at least 2 dimensions");
 
         this.shape = new Shape(dims);
         return this;
@@ -74,8 +82,8 @@ public final class TensorBuilder {
      * @throws IllegalStateException If the shape was already set.
      */
     public TensorBuilder shape(Shape shape) {
-        if (this.shape != null)
-            throw new IllegalStateException("shape already set");
+        Preconditions.checkState(this.shape == null, "shape already set");
+
         this.shape = shape;
         return this;
     }
@@ -100,10 +108,11 @@ public final class TensorBuilder {
      */
     public Tensor singleton(float value) {
         Shape expectedShape = new Shape(1, 1);
-        if (shape != null && !shape.equals(expectedShape))
-            throw new IllegalStateException("Cannot create a singleton tensor from shape " + shape);
+        Preconditions.checkState(shape == null || shape.equals(expectedShape), "Cannot create a singleton tensor from shape %s", shape);
 
-        return new Tensor(new float[]{ value }, expectedShape, 0, requiresGrad);
+        if (shape == null)
+            shape = expectedShape;
+        return build(i -> value);
     }
 
     /**
@@ -120,9 +129,9 @@ public final class TensorBuilder {
         if (data.length != shape.numel())
             throw new IllegalArgumentException("data did not match shape " + shape);
 
-        // Lets clone this... not for security, but to help prevent some
-        // silly people from doing silly things.
-        return new Tensor(data.clone(), shape, 0, requiresGrad);
+        NativeStorage ns = NativeStorage.allocate(allocator, DType.F32, data.length);
+        MemorySegment.copy(data, 0, ns.segment(), ValueLayout.JAVA_FLOAT, 0L, data.length);
+        return new Tensor(ns, shape, 0, requiresGrad);
     }
 
     /**
@@ -132,11 +141,7 @@ public final class TensorBuilder {
      * @throws IllegalStateException If the shape was not set yet.
      */
     public Tensor zeros() {
-        if (shape == null)
-            throw new IllegalStateException("shape was null, set that first");
-
-        float[] data = new float[shape.numel()];
-        return new Tensor(data, shape, 0, requiresGrad);
+        return build(i -> 0f);
     }
 
     /**
@@ -146,12 +151,7 @@ public final class TensorBuilder {
      * @throws IllegalStateException If the shape was not set yet.
      */
     public Tensor ones() {
-        if (shape == null)
-            throw new IllegalStateException("shape was null, set that first");
-
-        float[] data = new float[shape.numel()];
-        Arrays.fill(data, 1f);
-        return new Tensor(data, shape, 0, requiresGrad);
+        return build(i -> 1f);
     }
 
     /**
@@ -162,12 +162,7 @@ public final class TensorBuilder {
      * @throws IllegalStateException If the shape was not set yet.
      */
     public Tensor fill(float c) {
-        if (shape == null)
-            throw new IllegalStateException("shape was null, set that first");
-
-        float[] data = new float[shape.numel()];
-        Arrays.fill(data, c);
-        return new Tensor(data, shape, 0, requiresGrad);
+        return build(i -> c);
     }
 
     /**
@@ -218,14 +213,7 @@ public final class TensorBuilder {
      * @throws IllegalStateException If the shape was not set yet.
      */
     public Tensor rand(RandomGenerator rng, float min, float max) {
-        if (shape == null)
-            throw new IllegalStateException("shape was null, set that first");
-
-        float[] data = new float[shape.numel()];
-        for (int i = 0; i < data.length; i++) {
-            data[i] = rng.nextFloat(min, max);
-        }
-        return new Tensor(data, shape, 0, requiresGrad);
+        return build(i -> rng.nextFloat(min, max));
     }
 
     /**
@@ -277,15 +265,7 @@ public final class TensorBuilder {
      * @throws IllegalStateException If the shape was not set yet.
      */
     public Tensor randn(RandomGenerator rng, float mean, float stddev) {
-        if (shape == null)
-            throw new IllegalStateException("shape was null, set that first");
-
-        float[] data = new float[shape.numel()];
-        for (int i = 0; i < data.length; i++) {
-            float z = (float) rng.nextGaussian();
-            data[i] = mean + stddev * z;
-        }
-        return new Tensor(data, shape, 0, requiresGrad);
+        return build(i -> mean + stddev * (float) rng.nextGaussian());
     }
 
     /**
@@ -313,36 +293,8 @@ public final class TensorBuilder {
      * @throws IllegalStateException IF the shape was not set yet.
      */
     public Tensor bernoulli(RandomGenerator rng, float p) {
-        if (shape == null)
-            throw new IllegalStateException("shape was null, set that first");
-
-        float[] data = new float[shape.numel()];
-        for (int i = 0; i < data.length; i++) {
-            boolean res = rng.nextFloat(0f, 1f) < p;
-            data[i] = res ? 1f : 0f;
-        }
-        return new Tensor(data, shape, 0, requiresGrad);
+        return build(i -> rng.nextFloat(0f, 1f) < p ? 1f : 0f);
     }
-
-    /**
-     * Creates a tensor by invoking the given generator for each element.
-     *
-     * @param generator The generator to produce each element value.
-     * @return The generated tensor.
-     * @throws IllegalStateException If the shape was not set yet.
-     * @see Generator
-     */
-    public Tensor generate(Generator generator) {
-        if (shape == null)
-            throw new IllegalStateException("shape was null, set that first");
-
-        float[] data = new float[shape.numel()];
-        for (int i = 0; i < data.length; i++) {
-            data[i] = generator.generate(shape, i);
-        }
-        return new Tensor(data, shape, 0, requiresGrad);
-    }
-
 
     /**
      * Creates a new {@link TensorBuilder} instance.

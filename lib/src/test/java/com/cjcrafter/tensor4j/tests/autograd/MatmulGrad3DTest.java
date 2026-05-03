@@ -53,8 +53,8 @@ class MatmulGrad3DTest {
     }
 
     private static void checkGradByFiniteDiff(Tensor t, java.util.function.Supplier<Float> forward) {
-        float[] data = t.getData();
-        float[] grad = t.getGrad().getData();
+        float[] data = t.toFloatArray();
+        float[] grad = t.getGrad().toFloatArray();
         assertEquals(data.length, grad.length);
 
         for (int i = 0; i < data.length; i++) {

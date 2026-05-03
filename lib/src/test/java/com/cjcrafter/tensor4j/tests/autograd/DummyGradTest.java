@@ -41,7 +41,7 @@ public class DummyGradTest {
             }
 
             // data should be approximately 0f
-            float[] data = tensor.getData();
+            float[] data = tensor.toFloatArray();
             for (int i = 0; i < data.length; i++) {
                 assertEquals(0f, data[i], 1e-3, "Expected data[" + i + "] to be approx 0f");
             }

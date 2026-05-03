@@ -3,6 +3,7 @@ package com.cjcrafter.tensor4j.nn.optimizers;
 import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.Tensor4j;
 import com.cjcrafter.tensor4j.TensorBuilder;
+import com.cjcrafter.tensor4j.ops.SegmentKernels;
 
 import java.util.Collection;
 import java.util.IdentityHashMap;
@@ -66,28 +67,15 @@ public class Adam implements Optimizer {
             Tensor v = secondMoment.computeIfAbsent(param,
                     p -> TensorBuilder.builder().like(p).zeros());
 
-            float[] pData = param.getData();
-            int pOff = param.getOffset();
-            float[] gData = grad.getData();
-            int gOff = grad.getOffset();
-            float[] mData = m.getData();
-            int mOff = m.getOffset();
-            float[] vData = v.getData();
-            int vOff = v.getOffset();
-
-            int n = param.getShape().numel();
-            for (int i = 0; i < n; i++) {
-                float g = gData[gOff + i];
-
-                float mi = beta1 * mData[mOff + i] + (1f - beta1) * g;
-                float vi = beta2 * vData[vOff + i] + (1f - beta2) * g * g;
-                mData[mOff + i] = mi;
-                vData[vOff + i] = vi;
-
-                float mHat = mi / biasCorr1;
-                float vHat = vi / biasCorr2;
-                pData[pOff + i] -= lr * mHat / ((float) Math.sqrt(vHat) + eps);
-            }
+            SegmentKernels.adamw(
+                    param.getStorage().segment(), param.getOffset(),
+                    grad.getStorage().segment(), grad.getOffset(),
+                    m.getStorage().segment(), m.getOffset(),
+                    v.getStorage().segment(), v.getOffset(),
+                    param.getShape().numel(),
+                    lr, beta1, beta2,
+                    biasCorr1, biasCorr2,
+                    0f, eps);
         }
     }
 

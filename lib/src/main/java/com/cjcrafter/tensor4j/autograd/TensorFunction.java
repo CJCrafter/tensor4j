@@ -65,8 +65,7 @@ public abstract class TensorFunction {
         int[] targetStrides = Shape.contiguousStridesFrom(padded);
 
         float[] out = new float[targetShape.numel()];
-        float[] gradData = grad.getData();
-        int gradOff = grad.getOffset();
+        float[] gradData = grad.toFloatArray();
         int gradNumel = gradShape.numel();
 
         int[] indices = new int[gradNdim];
@@ -77,7 +76,7 @@ public abstract class TensorFunction {
                     targetFlat += indices[d] * targetStrides[d];
                 }
             }
-            out[targetFlat] += gradData[gradOff + flat];
+            out[targetFlat] += gradData[flat];
 
             // increment n-d index (rightmost first)
             for (int d = gradNdim - 1; d >= 0; d--) {

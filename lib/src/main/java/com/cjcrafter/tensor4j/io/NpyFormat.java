@@ -245,11 +245,10 @@ public final class NpyFormat {
         dout.writeBytes(paddedHeader);
 
         // Data (little-endian float32)
-        float[] data = t.getData();
-        int offset = t.getOffset();
+        float[] data = t.toFloatArray();
         int numel = t.getShape().numel();
         ByteBuffer buf = ByteBuffer.allocate(numel * 4).order(ByteOrder.LITTLE_ENDIAN);
-        buf.asFloatBuffer().put(data, offset, numel);
+        buf.asFloatBuffer().put(data, 0, numel);
         dout.write(buf.array());
 
         dout.flush();

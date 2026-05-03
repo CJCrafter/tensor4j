@@ -25,7 +25,7 @@ class DetachTest {
         Tensor a = Tensor4j.builder().shape(2, 3).requiresGrad().randn();
         Tensor d = a.detach();
 
-        assertSame(a.getData(), d.getData());
+        assertSame(a.getStorage(), d.getStorage());
         assertEquals(a.getShape(), d.getShape());
         assertEquals(a.getOffset(), d.getOffset());
     }
@@ -57,7 +57,7 @@ class DetachTest {
             loss.backward();
         }
 
-        for (float g : a.getGrad().getData()) {
+        for (float g : a.getGrad().toFloatArray()) {
             assertEquals(2f, g, 1e-6f,
                     "only the non-detached mul(2f) branch should contribute");
         }

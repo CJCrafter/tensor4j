@@ -31,7 +31,7 @@ public class FloatTest {
                         .randn(Tensor4j.getRandom(), mean, 1f);
 
                 // Ground truth: compute the mean in double precision
-                float[] data = bigAssMatrix.getData();
+                float[] data = bigAssMatrix.toFloatArray();
                 double trueMean = 0.0;
                 for (float v : data) trueMean += v;
                 trueMean /= n;

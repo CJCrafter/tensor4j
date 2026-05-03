@@ -1,14 +1,15 @@
 package com.cjcrafter.tensor4j.tests.memory;
 
 import com.cjcrafter.tensor4j.DType;
+import com.cjcrafter.tensor4j.Device;
 import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.Tensor4j;
-import com.cjcrafter.tensor4j.memory.HeapFloatStorage;
-import com.cjcrafter.tensor4j.memory.HeapStorage;
+import com.cjcrafter.tensor4j.memory.NativeStorage;
 import com.cjcrafter.tensor4j.memory.Storage;
 
 import org.junit.jupiter.api.Test;
 
+import java.lang.foreign.MemorySegment;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -17,13 +18,13 @@ class StorageRefcountTest {
 
     @Test
     void freshStorageStartsAtZero() {
-        Storage s = HeapFloatStorage.allocate(16);
+        Storage s = NativeStorage.allocate(DType.F32, 16);
         assertEquals(0, s.useCount());
     }
 
     @Test
     void incDecRoundTrips() {
-        Storage s = HeapFloatStorage.allocate(16);
+        Storage s = NativeStorage.allocate(DType.F32, 16);
         s.incRef();
         s.incRef();
         assertEquals(2, s.useCount());
@@ -35,14 +36,16 @@ class StorageRefcountTest {
 
     @Test
     void decRefBelowZeroThrows() {
-        Storage s = HeapFloatStorage.allocate(16);
+        Storage s = NativeStorage.allocate(DType.F32, 16);
         assertThrows(IllegalStateException.class, s::decRef);
     }
 
-    private static final class CountingStorage extends HeapStorage {
+    private static final class CountingStorage extends Storage {
         final AtomicInteger deletes = new AtomicInteger(0);
         @Override public DType dtype() { return DType.F32; }
+        @Override public Device device() { return Device.cpu(); }
         @Override public long sizeBytes() { return 16; }
+        @Override public MemorySegment segment() { return MemorySegment.NULL; }
         @Override protected void delete() { deletes.incrementAndGet(); }
     }
 

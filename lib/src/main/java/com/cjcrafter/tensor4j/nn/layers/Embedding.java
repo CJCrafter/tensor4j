@@ -19,13 +19,12 @@ public class Embedding extends Module {
     @Override
     public Tensor forward(Tensor input) {
         Tensor flat = input.contiguous();
-        float[] data = flat.getData();
-        int off = flat.getOffset();
         int n = flat.getShape().numel();
+        float[] data = flat.toFloatArray();
 
         int[] indices = new int[n];
         for (int i = 0; i < n; i++)
-            indices[i] = (int) data[off + i];
+            indices[i] = (int) data[i];
 
         Tensor selected = weight.indexSelect(0, indices);
 

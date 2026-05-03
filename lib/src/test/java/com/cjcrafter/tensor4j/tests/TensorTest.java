@@ -19,7 +19,7 @@ public class TensorTest {
                 .shape(128, 128)
                 .randn();
 
-        Assertions.assertArrayEquals(a.getData(), b.getData());
+        Assertions.assertArrayEquals(a.toFloatArray(), b.toFloatArray());
     }
 
     @Test

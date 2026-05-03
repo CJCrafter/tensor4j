@@ -7,6 +7,8 @@ import com.cjcrafter.tensor4j.TensorBuilder;
 import com.cjcrafter.tensor4j.nn.layers.*;
 import com.cjcrafter.tensor4j.util.Pair;
 import com.cjcrafter.tensor4j.util.Triple;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -35,21 +37,30 @@ class GradTest {
     private static final float EPSILON = 1e-2f; // less than 1% difference
     private static final float DELTA = 1e-3f;
 
+    private static float read(Tensor t, int flatIdx) {
+        return t.getStorage().segment().get(ValueLayout.JAVA_FLOAT,
+                (long) (t.getOffset() + flatIdx) * Float.BYTES);
+    }
+
+    private static void write(Tensor t, int flatIdx, float val) {
+        t.getStorage().segment().set(ValueLayout.JAVA_FLOAT,
+                (long) (t.getOffset() + flatIdx) * Float.BYTES, val);
+    }
 
     private static void testElementwiseGradients(Function<Tensor[], Tensor> forward, Tensor... inputs) {
         for (Tensor input : inputs) {
-            float[] param = input.getData();
-            float[] grad = input.getGrad().getData();
-            assertEquals(param.length, grad.length);
+            int n = input.getShape().numel();
+            float[] grad = input.getGrad().toFloatArray();
+            assertEquals(n, grad.length);
 
-            for (int i = 0; i < param.length; i++) {
-                float original = param[i];
+            for (int i = 0; i < n; i++) {
+                float original = read(input, i);
 
-                param[i] = original - DELTA;
-                float lossLower = forward.apply(inputs).getData()[i];
-                param[i] = original + DELTA;
-                float lossUpper = forward.apply(inputs).getData()[i];
-                param[i] = original;
+                write(input, i, original - DELTA);
+                float lossLower = forward.apply(inputs).toFloatArray()[i];
+                write(input, i, original + DELTA);
+                float lossUpper = forward.apply(inputs).toFloatArray()[i];
+                write(input, i, original);
 
                 assertGradMatches(grad[i], lossLower, lossUpper, i, original);
             }
@@ -58,18 +69,18 @@ class GradTest {
 
     private static void testScalarGradients(Function<Tensor[], Tensor> forward, Tensor... inputs) {
         for (Tensor input : inputs) {
-            float[] param = input.getData();
-            float[] grad = input.getGrad().getData();
-            assertEquals(param.length, grad.length);
+            int n = input.getShape().numel();
+            float[] grad = input.getGrad().toFloatArray();
+            assertEquals(n, grad.length);
 
-            for (int i = 0; i < param.length; i++) {
-                float original = param[i];
+            for (int i = 0; i < n; i++) {
+                float original = read(input, i);
 
-                param[i] = original - DELTA;
+                write(input, i, original - DELTA);
                 float lossLower = forward.apply(inputs).item();
-                param[i] = original + DELTA;
+                write(input, i, original + DELTA);
                 float lossUpper = forward.apply(inputs).item();
-                param[i] = original;
+                write(input, i, original);
 
                 assertGradMatches(grad[i], lossLower, lossUpper, i, original);
             }
@@ -299,7 +310,7 @@ class GradTest {
 
         // dL/da[i] = 1/N for every element
         float expected = 1f / a.getShape().numel();
-        for (float g : a.getGrad().getData()) {
+        for (float g : a.getGrad().toFloatArray()) {
             assertEquals(expected, g, 1e-6f);
         }
     }
@@ -328,8 +339,8 @@ class GradTest {
             loss.backward();
         }
 
-        float[] data = a.getData();
-        float[] grad = a.getGrad().getData();
+        float[] data = a.toFloatArray();
+        float[] grad = a.getGrad().toFloatArray();
         for (int i = 0; i < data.length; i++) {
             assertEquals(2f * data[i], grad[i], 1e-5f,
                     "expected dL/da[" + i + "] = 2a[i] = " + (2f * data[i]));
@@ -351,7 +362,7 @@ class GradTest {
         }
 
         float expected = K * (K + 1) / 2f;
-        for (float g : a.getGrad().getData()) {
+        for (float g : a.getGrad().toFloatArray()) {
             assertEquals(expected, g, 1e-4f);
         }
     }

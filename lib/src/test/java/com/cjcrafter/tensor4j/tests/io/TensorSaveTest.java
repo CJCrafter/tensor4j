@@ -87,8 +87,8 @@ class TensorSaveTest {
             Tensor actual = loadedState.get(key);
             int numel = expected.getShape().numel();
             for (int i = 0; i < numel; i++) {
-                assertEquals(expected.getData()[expected.getOffset() + i],
-                             actual.getData()[actual.getOffset() + i], EPS,
+                assertEquals(expected.toFloatArray()[expected.getOffset() + i],
+                             actual.toFloatArray()[actual.getOffset() + i], EPS,
                              "Mismatch in " + key + " at index " + i);
             }
         }

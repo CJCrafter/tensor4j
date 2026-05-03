@@ -30,8 +30,7 @@ public class CatFn extends TensorFunction {
         int outDimStride = outShape.dim(dim) * inner;
 
         Tensor[] grads = new Tensor[inputs.length];
-        float[] gradData = gradOutput.getData();
-        int gradOff = gradOutput.getOffset();
+        float[] gradData = gradOutput.toFloatArray();
 
         int cursor = 0;
         for (int k = 0; k < inputs.length; k++) {
@@ -42,7 +41,7 @@ public class CatFn extends TensorFunction {
             for (int o = 0; o < outer; o++) {
                 int outBase = o * outDimStride + cursor * inner;
                 int inBase = o * inDimStride;
-                System.arraycopy(gradData, gradOff + outBase, out, inBase, sizeK * inner);
+                System.arraycopy(gradData, outBase, out, inBase, sizeK * inner);
             }
             grads[k] = TensorBuilder.builder().shape(new Shape(dims)).fromArray(out);
             cursor += sizeK;

@@ -1,45 +1,22 @@
 package com.cjcrafter.tensor4j;
 
 import com.cjcrafter.tensor4j.autograd.*;
-import com.cjcrafter.tensor4j.memory.HeapFloatStorage;
+import com.cjcrafter.tensor4j.memory.NativeStorage;
 import com.cjcrafter.tensor4j.memory.Storage;
 import com.cjcrafter.tensor4j.ops.Ops;
 import com.google.common.base.Preconditions;
 
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.*;
 
 import static jdk.incubator.vector.VectorOperators.*;
 
 /**
- * A multi-dimensional matrix containing 32 bit floats.
+ * A multi-dimensional float32 matrix backed by a refcounted {@link Storage}.
  *
- * <p>By default, data is stored contiguously in a row-major format. This means
- * that looping over the underlying {@code float[] data} is equivalent to
- * looping over the logical ordering of the tensor. However, some methods, like
- * {@link #transpose()} can change the stride of the data. This means that the
- * only "safe" way to iterate over a tensor is:
- * <pre>{@code
- *         float[] dst = new float[n];
- *         int[] indices = new int[shape.dimensions()];
- *
- *         for (int flat = 0; flat < n; flat++) {
- *             dst[flat] = data[offset + shape.flatIndex(indices)];
- *
- *             // increment nd index (rightmost first)
- *             for (int d = indices.length - 1; d >= 0; d--) {
- *                 if (++indices[d] < shape.dim(d)) break;
- *                 indices[d] = 0;
- *             }
- *         }
- *         // now dst is an array with all elements in logical order
- * }</pre>
- * This is equivalent to calling {@link #contiguous()} then grabbing the
- * underlying {@code float[] data} using {@link #getData()}.
- *
- * <p>Most tensor operations in this class are <b>const</b>, meaning that they
- * return a new tensor object with a new underlying float array. The exception
- * to this rule is {@link #transpose()} and {@link #view(int...)}, which
- * re-use the underlying float array.
+ * <p>Most ops are out-of-place; {@link #transpose()}, {@link #view(int...)},
+ * and {@link #detach()} share the underlying storage.
  */
 public class Tensor implements Cloneable {
 
@@ -64,10 +41,6 @@ public class Tensor implements Cloneable {
         Tensor4j.onClean(this, storage::decRef);
     }
 
-    Tensor(float[] data, Shape shape, int offset, boolean requiresGrad) {
-        this(new HeapFloatStorage(data), shape, offset, requiresGrad);
-    }
-
     private AutogradMeta meta() {
         if (meta == null)
             meta = new AutogradMeta();
@@ -89,17 +62,29 @@ public class Tensor implements Cloneable {
     }
 
     /**
-     * Direct access to the backing float array. Only valid for heap-backed F32 storage.
+     * Returns a fresh {@code float[]} containing this tensor's logical
+     * elements in row-major order. Always copies; mutations to the returned
+     * array do not affect the tensor.
      */
-    public float[] getData() {
-        if (!(storage instanceof HeapFloatStorage h))
-            throw new UnsupportedOperationException(
-                    "getData() requires heap F32 storage, got " + storage.dtype() + " on " + storage.device());
-        return h.array();
+    public float[] toFloatArray() {
+        Tensor src = isContiguous() ? this : contiguous();
+        int n = shape.numel();
+        float[] out = new float[n];
+        MemorySegment.copy(src.storage.segment(), ValueLayout.JAVA_FLOAT,
+                (long) src.offset * Float.BYTES, out, 0, n);
+        return out;
     }
 
-    private float[] data() {
-        return ((HeapFloatStorage) storage).array();
+    private float read(int idx) {
+        return storage.segment().get(ValueLayout.JAVA_FLOAT, (long) idx * Float.BYTES);
+    }
+
+    private void write(int idx, float val) {
+        storage.segment().set(ValueLayout.JAVA_FLOAT, (long) idx * Float.BYTES, val);
+    }
+
+    private static Storage alloc(int numel) {
+        return NativeStorage.allocate(DType.F32, numel);
     }
 
     public Shape getShape() {
@@ -135,7 +120,7 @@ public class Tensor implements Cloneable {
         if (this.requiresGrad && meta != null && meta.gradFn != null)
             throw new IllegalStateException(
                     "in-place operation on a tensor that is part of the computation graph");
-        if (offset != 0 || data().length != shape.numel() || !isContiguous())
+        if (offset != 0 || storage.capacity() != shape.numel() || !isContiguous())
             throw new UnsupportedOperationException(
                     "in-place operation not supported on views or non-contiguous tensors");
     }
@@ -145,7 +130,9 @@ public class Tensor implements Cloneable {
             throw new IllegalStateException("backward() only supported on scalar tensors, got " + shape);
 
         // seed with dL/dL = 1
-        meta().grad = new Tensor(new float[]{1f}, new Shape(1, 1), 0, false);
+        Storage seedStorage = alloc(1);
+        seedStorage.segment().set(ValueLayout.JAVA_FLOAT, 0L, 1f);
+        meta().grad = new Tensor(seedStorage, new Shape(1, 1), 0, false);
 
         // build reverse-topological order of the forward graph so gradient is
         // fully accumulated from all paths before propagating further back.
@@ -173,7 +160,7 @@ public class Tensor implements Cloneable {
                 } else {
                     // accumulate in-place, bypassing checkInPlaceSafe since
                     // grad tensors are never part of the forward graph
-                    Ops.binaryOp(ADD, im.grad, grads[i], im.grad.shape, im.grad.data());
+                    Ops.binaryOp(ADD, im.grad, grads[i], im.grad.shape, im.grad.storage);
                 }
             }
         }
@@ -193,15 +180,15 @@ public class Tensor implements Cloneable {
     public float item() {
         if (shape.numel() != 1)
             throw new IllegalStateException("item() only valid on single-element tensors, got shape " + shape);
-        return data()[offset];
+        return read(offset);
     }
 
     public float get(int... indices) {
-        return data()[offset + shape.flatIndex(indices)];
+        return read(offset + shape.flatIndex(indices));
     }
 
     public void set(float val, int... indices) {
-        data()[offset + shape.flatIndex(indices)] = val;
+        write(offset + shape.flatIndex(indices), val);
     }
 
     public boolean isContiguous() {
@@ -230,14 +217,15 @@ public class Tensor implements Cloneable {
             return this;
 
         int n = shape.numel();
-        float[] dst = new float[n];
+        Storage dst = alloc(n);
+        MemorySegment dstSeg = dst.segment();
+        MemorySegment srcSeg = storage.segment();
         int[] indices = new int[shape.dimensions()];
-        float[] src = data();
 
         for (int flat = 0; flat < n; flat++) {
-            dst[flat] = src[offset + shape.flatIndex(indices)];
+            float v = srcSeg.get(ValueLayout.JAVA_FLOAT, (long) (offset + shape.flatIndex(indices)) * Float.BYTES);
+            dstSeg.set(ValueLayout.JAVA_FLOAT, (long) flat * Float.BYTES, v);
 
-            // increment nd index (rightmost first)
             for (int d = indices.length - 1; d >= 0; d--) {
                 if (++indices[d] < shape.dim(d)) break;
                 indices[d] = 0;
@@ -253,9 +241,11 @@ public class Tensor implements Cloneable {
 
     @Override
     public Tensor clone() {
-        // TODO: allow cloning into different memory formats
-        float[] src = data();
-        Tensor tensor = new Tensor(Arrays.copyOf(src, src.length), shape, 0, requiresGrad);
+        int capacity = (int) storage.capacity();
+        Storage dst = alloc(capacity);
+        MemorySegment.copy(storage.segment(), 0L, dst.segment(), 0L,
+                (long) capacity * Float.BYTES);
+        Tensor tensor = new Tensor(dst, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             tensor.setGradFn(new IdentityFn(this));
         }
@@ -303,20 +293,26 @@ public class Tensor implements Cloneable {
         for (int d = dim + 1; d < ndim; d++) inner *= first.dim(d);
         int outDimStride = catTotal * inner;
 
-        float[] out = new float[outShape.numel()];
         boolean grad = false;
+        for (Tensor t : tensors) {
+            if (t.requiresGrad) grad = true;
+        }
+        Storage out = alloc(outShape.numel());
+        MemorySegment outSeg = out.segment();
+
         int cursor = 0;
         for (int k = 0; k < tensors.length; k++) {
             Tensor t = tensors[k].isContiguous() ? tensors[k] : tensors[k].contiguous();
-            grad |= t.requiresGrad;
             int sizeK = sizesAlongDim[k];
             int inDimStride = sizeK * inner;
-            float[] tData = t.data();
+            MemorySegment tSeg = t.storage.segment();
             int tOff = t.offset;
             for (int o = 0; o < outer; o++) {
                 int outBase = o * outDimStride + cursor * inner;
                 int inBase = tOff + o * inDimStride;
-                System.arraycopy(tData, inBase, out, outBase, sizeK * inner);
+                MemorySegment.copy(tSeg, (long) inBase * Float.BYTES,
+                        outSeg, (long) outBase * Float.BYTES,
+                        (long) sizeK * inner * Float.BYTES);
             }
             cursor += sizeK;
         }
@@ -352,14 +348,18 @@ public class Tensor implements Cloneable {
         for (int d = 0; d < dim; d++)
             outerSize *= shape.dim(d);
 
-        float[] out = new float[outerSize * indices.length * sliceSize];
-        float[] src = data();
+        int outNumel = outerSize * indices.length * sliceSize;
+        Storage out = alloc(outNumel);
+        MemorySegment outSeg = out.segment();
+        MemorySegment srcSeg = storage.segment();
         int outPos = 0;
 
         for (int outer = 0; outer < outerSize; outer++) {
             int outerOff = offset + outer * dimStride;
             for (int idx : indices) {
-                System.arraycopy(src, outerOff + idx * sliceSize, out, outPos, sliceSize);
+                MemorySegment.copy(srcSeg, (long) (outerOff + idx * sliceSize) * Float.BYTES,
+                        outSeg, (long) outPos * Float.BYTES,
+                        (long) sliceSize * Float.BYTES);
                 outPos += sliceSize;
             }
         }
@@ -408,7 +408,7 @@ public class Tensor implements Cloneable {
             resultShape = new Shape(batch, m, n);
         }
 
-        float[] resultData = Ops.matmul(this, other, resultShape);
+        Storage resultData = Ops.matmul(this, other, resultShape);
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
@@ -423,7 +423,9 @@ public class Tensor implements Cloneable {
 
     public Tensor sum() {
         float val = Ops.sum(this);
-        Tensor result = new Tensor(new float[]{val}, new Shape(1, 1), 0, requiresGrad);
+        Storage out = alloc(1);
+        out.segment().set(ValueLayout.JAVA_FLOAT, 0L, val);
+        Tensor result = new Tensor(out, new Shape(1, 1), 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new SumFn(this));
         }
@@ -434,7 +436,7 @@ public class Tensor implements Cloneable {
         if (dim < 0 || dim >= shape.dimensions())
             throw new IllegalArgumentException("dim " + dim + " out of range for " + shape.dimensions() + "D tensor");
 
-        float[] resultData = Ops.sumDim(this, dim);
+        Storage resultData = Ops.sumDim(this, dim);
 
         // result shape: same as input but with dims[dim] = 1
         int[] newDims = shape.dims();
@@ -452,7 +454,7 @@ public class Tensor implements Cloneable {
         if (dim < 0 || dim >= shape.dimensions())
             throw new IllegalArgumentException("dim " + dim + " out of range for " + shape.dimensions() + "D tensor");
 
-        float[] resultData = Ops.maxDim(this, dim);
+        Storage resultData = Ops.maxDim(this, dim);
 
         int[] newDims = shape.dims();
         newDims[dim] = 1;
@@ -469,7 +471,7 @@ public class Tensor implements Cloneable {
         if (dim < 0 || dim >= shape.dimensions())
             throw new IllegalArgumentException("dim " + dim + " out of range for " + shape.dimensions() + "D tensor");
 
-        float[] resultData = Ops.argmaxDim(this, dim);
+        Storage resultData = Ops.argmaxDim(this, dim);
 
         int[] newDims = shape.dims();
         newDims[dim] = 1;
@@ -507,7 +509,9 @@ public class Tensor implements Cloneable {
 
     public Tensor mean() {
         float val = Ops.mean(this);
-        Tensor result = new Tensor(new float[]{val}, new Shape(1, 1), 0, requiresGrad);
+        Storage out = alloc(1);
+        out.segment().set(ValueLayout.JAVA_FLOAT, 0L, val);
+        Tensor result = new Tensor(out, new Shape(1, 1), 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new MeanFn(this));
         }
@@ -520,8 +524,7 @@ public class Tensor implements Cloneable {
 
 
     public Tensor tanh() {
-        float[] resultData = new float[shape.numel()];
-        Ops.unaryOp(TANH, this, resultData);
+        Storage resultData = Ops.unaryOp(TANH, this);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new TanhFn(this, result.detach()));
@@ -530,8 +533,7 @@ public class Tensor implements Cloneable {
     }
 
     public Tensor abs() {
-        float[] resultData = new float[shape.numel()];
-        Ops.unaryOp(ABS, this, resultData);
+        Storage resultData = Ops.unaryOp(ABS, this);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new AbsFn(this));
@@ -541,13 +543,12 @@ public class Tensor implements Cloneable {
 
     public Tensor abs_() {
         checkInPlaceSafe();
-        Ops.unaryOp(ABS, this, data());
+        Ops.unaryOp(ABS, this, storage);
         return this;
     }
 
     public Tensor exp() {
-        float[] resultData = new float[shape.numel()];
-        Ops.unaryOp(EXP, this, resultData);
+        Storage resultData = Ops.unaryOp(EXP, this);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new ExpFn(this, result.detach()));
@@ -557,13 +558,12 @@ public class Tensor implements Cloneable {
 
     public Tensor exp_() {
         checkInPlaceSafe();
-        Ops.unaryOp(EXP, this, data());
+        Ops.unaryOp(EXP, this, storage);
         return this;
     }
 
     public Tensor log() {
-        float[] resultData = new float[shape.numel()];
-        Ops.unaryOp(LOG, this, resultData);
+        Storage resultData = Ops.unaryOp(LOG, this);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new LogFn(this));
@@ -573,13 +573,12 @@ public class Tensor implements Cloneable {
 
     public Tensor log_() {
         checkInPlaceSafe();
-        Ops.unaryOp(LOG, this, data());
+        Ops.unaryOp(LOG, this, storage);
         return this;
     }
 
     public Tensor sqrt() {
-        float[] resultData = new float[shape.numel()];
-        Ops.unaryOp(SQRT, this, resultData);
+        Storage resultData = Ops.unaryOp(SQRT, this);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new SqrtFn(this, result.detach()));
@@ -589,14 +588,13 @@ public class Tensor implements Cloneable {
 
     public Tensor sqrt_() {
         checkInPlaceSafe();
-        Ops.unaryOp(SQRT, this, data());
+        Ops.unaryOp(SQRT, this, storage);
         return this;
     }
 
     public Tensor square() {
         // TODO: make optimized kernel
-        float[] resultData = new float[shape.numel()];
-        Ops.binaryOp(MUL, this, this, shape, resultData);
+        Storage resultData = Ops.binaryOp(MUL, this, this, shape);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new SquareFn(this));
@@ -606,7 +604,7 @@ public class Tensor implements Cloneable {
 
     public Tensor square_() {
         checkInPlaceSafe();
-        Ops.binaryOp(MUL, this, this, shape, data());
+        Ops.binaryOp(MUL, this, this, shape, storage);
         return this;
     }
 
@@ -619,8 +617,7 @@ public class Tensor implements Cloneable {
         if (resultShape == null)
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
 
-        float[] resultData = new float[resultShape.numel()];
-        Ops.binaryOp(ADD, this, other, resultShape, resultData);
+        Storage resultData = Ops.binaryOp(ADD, this, other, resultShape);
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
@@ -634,13 +631,12 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (!resultShape.equals(this.shape))
             throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(ADD, this, other, resultShape, data());
+        Ops.binaryOp(ADD, this, other, resultShape, storage);
         return this;
     }
 
     public Tensor add(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.binaryOpConst(ADD, this, other, resultData);
+        Storage resultData = Ops.binaryOpConst(ADD, this, other);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new AddConstFn(this, other));
@@ -650,7 +646,7 @@ public class Tensor implements Cloneable {
 
     public Tensor add_(float other) {
         checkInPlaceSafe();
-        Ops.binaryOpConst(ADD, this, other, data());
+        Ops.binaryOpConst(ADD, this, other, storage);
         return this;
     }
 
@@ -659,8 +655,7 @@ public class Tensor implements Cloneable {
         if (resultShape == null)
             throw new IllegalArgumentException(
                     "cannot broadcast shapes " + this.shape + " and " + other.shape);
-        float[] resultData = new float[resultShape.numel()];
-        Ops.binaryOp(SUB, this, other, resultShape, resultData);
+        Storage resultData = Ops.binaryOp(SUB, this, other, resultShape);
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
@@ -674,13 +669,12 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (!resultShape.equals(this.shape))
             throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(SUB, this, other, resultShape, data());
+        Ops.binaryOp(SUB, this, other, resultShape, storage);
         return this;
     }
 
     public Tensor sub(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.binaryOpConst(SUB, this, other, resultData);
+        Storage resultData = Ops.binaryOpConst(SUB, this, other);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new AddConstFn(this, other));
@@ -690,13 +684,12 @@ public class Tensor implements Cloneable {
 
     public Tensor sub_(float other) {
         checkInPlaceSafe();
-        Ops.binaryOpConst(SUB, this, other, data());
+        Ops.binaryOpConst(SUB, this, other, storage);
         return this;
     }
 
     public Tensor rsub(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.rbinaryOpConst(SUB, other, this, resultData);
+        Storage resultData = Ops.rbinaryOpConst(SUB, other, this);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new SubRConstFn(other, this));
@@ -706,7 +699,7 @@ public class Tensor implements Cloneable {
 
     public Tensor rsub_(float other) {
         checkInPlaceSafe();
-        Ops.rbinaryOpConst(SUB, other, this, data());
+        Ops.rbinaryOpConst(SUB, other, this, storage);
         return this;
     }
 
@@ -715,8 +708,7 @@ public class Tensor implements Cloneable {
         if (resultShape == null)
             throw new IllegalArgumentException(
                     "cannot broadcast shapes " + this.shape + " and " + other.shape);
-        float[] resultData = new float[resultShape.numel()];
-        Ops.binaryOp(MUL, this, other, resultShape, resultData);
+        Storage resultData = Ops.binaryOp(MUL, this, other, resultShape);
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
@@ -730,13 +722,12 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (!resultShape.equals(this.shape))
             throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(MUL, this, other, resultShape, data());
+        Ops.binaryOp(MUL, this, other, resultShape, storage);
         return this;
     }
 
     public Tensor mul(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.binaryOpConst(MUL, this, other, resultData);
+        Storage resultData = Ops.binaryOpConst(MUL, this, other);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new MulConstFn(this, other));
@@ -746,7 +737,7 @@ public class Tensor implements Cloneable {
 
     public Tensor mul_(float other) {
         checkInPlaceSafe();
-        Ops.binaryOpConst(MUL, this, other, data());
+        Ops.binaryOpConst(MUL, this, other, storage);
         return this;
     }
 
@@ -755,8 +746,7 @@ public class Tensor implements Cloneable {
         if (resultShape == null)
             throw new IllegalArgumentException(
                     "cannot broadcast shapes " + this.shape + " and " + other.shape);
-        float[] resultData = new float[resultShape.numel()];
-        Ops.binaryOp(DIV, this, other, resultShape, resultData);
+        Storage resultData = Ops.binaryOp(DIV, this, other, resultShape);
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
@@ -770,13 +760,12 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (!resultShape.equals(this.shape))
             throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(DIV, this, other, resultShape, data());
+        Ops.binaryOp(DIV, this, other, resultShape, storage);
         return this;
     }
 
     public Tensor div(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.binaryOpConst(DIV, this, other, resultData);
+        Storage resultData = Ops.binaryOpConst(DIV, this, other);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new DivConstFn(this, other));
@@ -786,13 +775,12 @@ public class Tensor implements Cloneable {
 
     public Tensor div_(float other) {
         checkInPlaceSafe();
-        Ops.binaryOpConst(DIV, this, other, data());
+        Ops.binaryOpConst(DIV, this, other, storage);
         return this;
     }
 
     public Tensor rdiv(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.rbinaryOpConst(DIV, other, this, resultData);
+        Storage resultData = Ops.rbinaryOpConst(DIV, other, this);
         Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             result.setGradFn(new DivRConstFn(other, this));
@@ -802,7 +790,7 @@ public class Tensor implements Cloneable {
 
     public Tensor rdiv_(float other) {
         checkInPlaceSafe();
-        Ops.rbinaryOpConst(DIV, other, this, data());
+        Ops.rbinaryOpConst(DIV, other, this, storage);
         return this;
     }
 
@@ -810,8 +798,7 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (resultShape == null)
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        float[] resultData = new float[resultShape.numel()];
-        Ops.binaryOp(MAX, this, other, resultShape, resultData);
+        Storage resultData = Ops.binaryOp(MAX, this, other, resultShape);
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
@@ -825,13 +812,12 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (!resultShape.equals(this.shape))
             throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(MAX, this, other, resultShape, data());
+        Ops.binaryOp(MAX, this, other, resultShape, storage);
         return this;
     }
 
     public Tensor max(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.binaryOpConst(MAX, this, other, resultData);
+        Storage resultData = Ops.binaryOpConst(MAX, this, other);
         // relu is a special case where we definitely don't need to change the order
         // at all or make it contiguous... we just need the shape to match exactly.
         Tensor tensor = new Tensor(resultData, new Shape(shape.dims(), shape.strides()), 0, requiresGrad);
@@ -843,7 +829,7 @@ public class Tensor implements Cloneable {
 
     public Tensor max_(float other) {
         checkInPlaceSafe();
-        Ops.binaryOpConst(MAX, this, other, data());
+        Ops.binaryOpConst(MAX, this, other, storage);
         return this;
     }
 
@@ -851,8 +837,7 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (resultShape == null)
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        float[] resultData = new float[resultShape.numel()];
-        Ops.binaryOp(MIN, this, other, resultShape, resultData);
+        Storage resultData = Ops.binaryOp(MIN, this, other, resultShape);
         boolean grad = this.requiresGrad || other.requiresGrad;
         Tensor result = new Tensor(resultData, resultShape, 0, grad);
         if (grad && Tensor4j.isGradEnabled()) {
@@ -866,13 +851,12 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (!resultShape.equals(this.shape))
             throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(MIN, this, other, resultShape, data());
+        Ops.binaryOp(MIN, this, other, resultShape, storage);
         return this;
     }
 
     public Tensor min(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.binaryOpConst(MIN, this, other, resultData);
+        Storage resultData = Ops.binaryOpConst(MIN, this, other);
         Tensor tensor = new Tensor(resultData, new Shape(shape.dims(), shape.strides()), 0, requiresGrad);
         if (requiresGrad && Tensor4j.isGradEnabled()) {
             tensor.setGradFn(new MinConstFn(this, other));
@@ -882,7 +866,7 @@ public class Tensor implements Cloneable {
 
     public Tensor min_(float other) {
         checkInPlaceSafe();
-        Ops.binaryOpConst(MIN, this, other, data());
+        Ops.binaryOpConst(MIN, this, other, storage);
         return this;
     }
 
@@ -894,8 +878,7 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (resultShape == null)
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        float[] resultData = new float[resultShape.numel()];
-        Ops.comparisonOp(EQ, this, other, resultShape, resultData);
+        Storage resultData = Ops.comparisonOp(EQ, this, other, resultShape);
         // always no grad... gradient is strictly 0
         return new Tensor(resultData, resultShape, 0, false);
     }
@@ -905,20 +888,19 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (!this.shape.equals(resultShape))
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Ops.comparisonOp(EQ, this, other, resultShape, data());
+        Ops.comparisonOp(EQ, this, other, resultShape, storage);
         return this;
     }
 
     public Tensor eq(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.comparisonOpConst(EQ, this, other, resultData);
+        Storage resultData = Ops.comparisonOpConst(EQ, this, other);
         // always no grad... gradient is strictly 0
         return new Tensor(resultData, shape, 0, false);
     }
 
     public Tensor eq_(float other) {
         checkInPlaceSafe();
-        Ops.comparisonOpConst(EQ, this, other, data());
+        Ops.comparisonOpConst(EQ, this, other, storage);
         // always no grad... gradient is strictly 0
         return this;
     }
@@ -927,8 +909,7 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (resultShape == null)
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        float[] resultData = new float[resultShape.numel()];
-        Ops.comparisonOp(LT, this, other, resultShape, resultData);
+        Storage resultData = Ops.comparisonOp(LT, this, other, resultShape);
         // always no grad... gradient is strictly 0
         return new Tensor(resultData, resultShape, 0, false);
     }
@@ -938,21 +919,20 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (!this.shape.equals(resultShape))
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Ops.comparisonOp(LT, this, other, resultShape, data());
+        Ops.comparisonOp(LT, this, other, resultShape, storage);
         // always no grad... gradient is strictly 0
         return this;
     }
 
     public Tensor lt(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.comparisonOpConst(LT, this, other, resultData);
+        Storage resultData = Ops.comparisonOpConst(LT, this, other);
         // always no grad... gradient is strictly 0
         return new Tensor(resultData, shape, 0, false);
     }
 
     public Tensor lt_(float other) {
         checkInPlaceSafe();
-        Ops.comparisonOpConst(LT, this, other, data());
+        Ops.comparisonOpConst(LT, this, other, storage);
         // always no grad... gradient is strictly 0
         return this;
     }
@@ -961,8 +941,7 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (resultShape == null)
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        float[] resultData = new float[resultShape.numel()];
-        Ops.comparisonOp(LE, this, other, resultShape, resultData);
+        Storage resultData = Ops.comparisonOp(LE, this, other, resultShape);
         // always no grad... gradient is strictly 0
         return new Tensor(resultData, resultShape, 0, false);
     }
@@ -972,21 +951,20 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (!this.shape.equals(resultShape))
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Ops.comparisonOp(LE, this, other, resultShape, data());
+        Ops.comparisonOp(LE, this, other, resultShape, storage);
         // always no grad... gradient is strictly 0
         return this;
     }
 
     public Tensor le(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.comparisonOpConst(LE, this, other, resultData);
+        Storage resultData = Ops.comparisonOpConst(LE, this, other);
         // always no grad... gradient is strictly 0
         return new Tensor(resultData, shape, 0, false);
     }
 
     public Tensor le_(float other) {
         checkInPlaceSafe();
-        Ops.comparisonOpConst(LE, this, other, data());
+        Ops.comparisonOpConst(LE, this, other, storage);
         // always no grad... gradient is strictly 0
         return this;
     }
@@ -995,8 +973,7 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (resultShape == null)
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        float[] resultData = new float[resultShape.numel()];
-        Ops.comparisonOp(GT, this, other, resultShape, resultData);
+        Storage resultData = Ops.comparisonOp(GT, this, other, resultShape);
         // always no grad... gradient is strictly 0
         return new Tensor(resultData, resultShape, 0, false);
     }
@@ -1006,20 +983,19 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (this.shape.equals(resultShape))
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Ops.comparisonOp(GT, this, other, resultShape, data());
+        Ops.comparisonOp(GT, this, other, resultShape, storage);
         // always no grad... gradient is strictly 0
         return this;
     }
 
     public Tensor gt(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.comparisonOpConst(GT, this, other, resultData);
+        Storage resultData = Ops.comparisonOpConst(GT, this, other);
         // always no grad... gradient is strictly 0
         return new Tensor(resultData, shape, 0, false);
     }
 
     public Tensor gt_(float other) {
-        Ops.comparisonOpConst(GT, this, other, data());
+        Ops.comparisonOpConst(GT, this, other, storage);
         // always no grad... gradient is strictly 0
         return this;
     }
@@ -1028,8 +1004,7 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (resultShape == null)
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        float[] resultData = new float[resultShape.numel()];
-        Ops.comparisonOp(GE, this, other, resultShape, resultData);
+        Storage resultData = Ops.comparisonOp(GE, this, other, resultShape);
         // always no grad... gradient is strictly 0
         return new Tensor(resultData, resultShape, 0, false);
     }
@@ -1039,21 +1014,20 @@ public class Tensor implements Cloneable {
         Shape resultShape = this.shape.broadcastWith(other.shape);
         if (!this.shape.equals(resultShape))
             throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Ops.comparisonOp(GE, this, other, resultShape, data());
+        Ops.comparisonOp(GE, this, other, resultShape, storage);
         // always no grad... gradient is strictly 0
         return this;
     }
 
     public Tensor ge(float other) {
-        float[] resultData = new float[shape.numel()];
-        Ops.comparisonOpConst(GE, this, other, resultData);
+        Storage resultData = Ops.comparisonOpConst(GE, this, other);
         // always no grad... gradient is strictly 0
         return new Tensor(resultData, shape, 0, false);
     }
 
     public Tensor ge_(float other) {
         checkInPlaceSafe();
-        Ops.comparisonOpConst(GE, this, other, data());
+        Ops.comparisonOpConst(GE, this, other, storage);
         // always no grad... gradient is strictly 0
         return this;
     }
@@ -1080,13 +1054,12 @@ public class Tensor implements Cloneable {
     public String toString() {
         int ndim = shape.dimensions();
         int numel = shape.numel();
-        float[] src = data();
 
         // collect all values for consistent formatting
         float[] values = new float[numel];
         int[] indices = new int[ndim];
         for (int i = 0; i < numel; i++) {
-            values[i] = src[offset + shape.flatIndex(indices)];
+            values[i] = read(offset + shape.flatIndex(indices));
             for (int d = ndim - 1; d >= 0; d--) {
                 if (++indices[d] < shape.dim(d)) break;
                 indices[d] = 0;

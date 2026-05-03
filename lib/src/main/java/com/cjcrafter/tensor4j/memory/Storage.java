@@ -3,6 +3,7 @@ package com.cjcrafter.tensor4j.memory;
 import com.cjcrafter.tensor4j.DType;
 import com.cjcrafter.tensor4j.Device;
 
+import java.lang.foreign.MemorySegment;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -44,4 +45,10 @@ public abstract class Storage {
      * Releases the underlying buffer. Invoked exactly once when the strong refcount hits zero.
      */
     protected abstract void delete();
+
+    /**
+     * Returns a {@link MemorySegment} view over this storage. Heap-backed
+     * storage wraps its array; native storage returns the slab slice.
+     */
+    public abstract MemorySegment segment();
 }

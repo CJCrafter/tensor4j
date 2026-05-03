@@ -40,12 +40,11 @@ public class IndexSelectFn extends TensorFunction {
         int gradDimStride = indices.length * sliceSize;
 
         float[] out = new float[inputShape.numel()];
-        float[] gradData = gradOutput.getData();
-        int gradOff = gradOutput.getOffset();
+        float[] gradData = gradOutput.toFloatArray();
 
         for (int outer = 0; outer < outerSize; outer++) {
             int outOuter = outer * inputDimStride;
-            int gradOuter = gradOff + outer * gradDimStride;
+            int gradOuter = outer * gradDimStride;
             for (int k = 0; k < indices.length; k++) {
                 int dstBase = outOuter + indices[k] * sliceSize;
                 int srcBase = gradOuter + k * sliceSize;
