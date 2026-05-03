@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.ADD;
+
 /**
  * Backward for {@code C = A + B}.
  *
@@ -11,6 +13,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * }</pre>
  */
 public class AddFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a, Tensor b) {
+        return applyBinary(ADD, AddFn::new, a, b);
+    }
 
     public AddFn(Tensor a, Tensor b) {
         super(a, b);

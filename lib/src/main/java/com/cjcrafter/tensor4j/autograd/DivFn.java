@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.DIV;
+
 /**
  * Backward for {@code A / B}.
  *
@@ -11,6 +13,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * }</pre>
  */
 public class DivFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a, Tensor b) {
+        return applyBinary(DIV, DivFn::new, a, b);
+    }
 
     public DivFn(Tensor a, Tensor b) {
         super(a, b);

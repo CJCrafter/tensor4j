@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.ABS;
+
 /**
  * Backward for {@code abs(a)}.
  *
@@ -10,6 +12,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * }</pre>
  */
 public class AbsFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a) {
+        return applyUnary(ABS, AbsFn::new, a);
+    }
 
     public AbsFn(Tensor a) {
         super(a);

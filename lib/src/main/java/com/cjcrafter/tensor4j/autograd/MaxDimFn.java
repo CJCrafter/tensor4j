@@ -1,6 +1,10 @@
 package com.cjcrafter.tensor4j.autograd;
 
+import com.cjcrafter.tensor4j.Shape;
 import com.cjcrafter.tensor4j.Tensor;
+import com.cjcrafter.tensor4j.memory.Storage;
+import com.cjcrafter.tensor4j.ops.Ops;
+import com.google.common.base.Preconditions;
 
 /**
  * Backward for {@code max(dim)}.
@@ -10,6 +14,17 @@ import com.cjcrafter.tensor4j.Tensor;
  * }</pre>
  */
 public class MaxDimFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a, int dim) {
+        Preconditions.checkArgument(dim >= 0 && dim < a.getShape().dimensions(),
+                "dim %s out of range for %sD tensor", dim, a.getShape().dimensions());
+        Storage out = Ops.maxDim(a, dim);
+        int[] newDims = a.getShape().dims();
+        newDims[dim] = 1;
+        Shape resultShape = new Shape(newDims);
+        return Tensor.wrapResultDeferred(out, resultShape, new Tensor[]{a},
+                cached -> new MaxDimFn(a, cached, dim));
+    }
 
     private final Tensor result;
     private final int dim;

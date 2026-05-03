@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.MAX;
+
 /**
  * Backward for {@code ReLU: max(x, b)}.
  *
@@ -12,6 +14,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * <p>Equivalent to: {@code gradOutput * (input > b)}.
  */
 public class MaxConstFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a, float b) {
+        return applyBinaryConst(MAX, t -> new MaxConstFn(t, b), a, b);
+    }
 
     private final float b;
 

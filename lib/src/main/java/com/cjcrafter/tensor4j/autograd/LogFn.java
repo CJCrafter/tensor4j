@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.LOG;
+
 /**
  * Backward for {@code log(A)} (natural log).
  *
@@ -10,6 +12,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * }</pre>
  */
 public class LogFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a) {
+        return applyUnary(LOG, LogFn::new, a);
+    }
 
     public LogFn(Tensor a) {
         super(a);

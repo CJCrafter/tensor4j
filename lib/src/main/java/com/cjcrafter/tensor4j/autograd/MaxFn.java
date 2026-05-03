@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.MAX;
+
 /**
  * Backward for {@code max(x, b)}.
  *
@@ -10,6 +12,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * }</pre>
  */
 public class MaxFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a, Tensor b) {
+        return applyBinary(MAX, MaxFn::new, a, b);
+    }
 
     public MaxFn(Tensor a, Tensor b) {
         super(a, b);

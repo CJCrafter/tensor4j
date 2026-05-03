@@ -10,6 +10,11 @@ import com.cjcrafter.tensor4j.Tensor;
  */
 public class ViewFn extends TensorFunction {
 
+    public static Tensor apply(Tensor a, int[] newDims) {
+        Shape newShape = a.getShape().reshape(newDims);
+        return Tensor.wrapResult(a.getStorage(), newShape, a.getOffset(), new ViewFn(a));
+    }
+
     private final Shape sourceShape;
 
     public ViewFn(Tensor input) {

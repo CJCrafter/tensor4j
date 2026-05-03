@@ -9,6 +9,11 @@ import com.cjcrafter.tensor4j.Tensor;
  */
 public class TransposeFn extends TensorFunction {
 
+    public static Tensor apply(Tensor a) {
+        return Tensor.wrapResult(a.getStorage(), a.getShape().transpose(),
+                a.getOffset(), new TransposeFn(a));
+    }
+
     public TransposeFn(Tensor input) {
         super(input);
     }

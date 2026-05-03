@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.MIN;
+
 /**
  * Backward for elementwise {@code min(a, b)}.
  *
@@ -14,6 +16,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * magnitude is preserved.
  */
 public class MinFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a, Tensor b) {
+        return applyBinary(MIN, MinFn::new, a, b);
+    }
 
     public MinFn(Tensor a, Tensor b) {
         super(a, b);

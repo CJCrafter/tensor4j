@@ -41,13 +41,137 @@ public class Tensor implements Cloneable {
         Tensor4j.onClean(this, storage::decRef);
     }
 
+    private static Storage alloc(int numel) {
+        return NativeStorage.allocate(DType.F32, numel);
+    }
+
+    // ---- accessors ----
+
+    /**
+     * Wrap an op result in a {@link Tensor} and attach {@code fn} as its gradFn
+     * iff any input requires grad and grad tracking is enabled. The new tensor
+     * is at offset 0.
+     */
+    public static Tensor wrapResult(Storage storage, Shape shape, TensorFunction fn) {
+        return wrapResult(storage, shape, 0, fn);
+    }
+
+    /**
+     * Variant of {@link #wrapResult(Storage, Shape, TensorFunction)} that
+     * allows a non-zero offset (for view-like ops that share storage).
+     */
+    public static Tensor wrapResult(Storage storage, Shape shape, int offset, TensorFunction fn) {
+        boolean grad = false;
+        for (Tensor input : fn.getInputs()) {
+            if (input.requiresGrad) {
+                grad = true;
+                break;
+            }
+        }
+        Tensor result = new Tensor(storage, shape, offset, grad);
+        if (grad && Tensor4j.isGradEnabled()) {
+            result.setGradFn(fn);
+        }
+        return result;
+    }
+
+    /**
+     * Like {@link #wrapResult(Storage, Shape, TensorFunction)} but defers
+     * Function construction until after the result tensor exists, passing the
+     * detached result back to the factory. Used by ops that cache their own
+     * output for the backward pass (e.g. exp, sqrt, tanh).
+     */
+    public static Tensor wrapResultDeferred(Storage storage, Shape shape,
+                                            Tensor[] inputs,
+                                            java.util.function.Function<Tensor, TensorFunction> fnFactory) {
+        boolean grad = false;
+        for (Tensor input : inputs) {
+            if (input.requiresGrad) {
+                grad = true;
+                break;
+            }
+        }
+        Tensor result = new Tensor(storage, shape, 0, grad);
+        if (grad && Tensor4j.isGradEnabled()) {
+            result.setGradFn(fnFactory.apply(result.detach()));
+        }
+        return result;
+    }
+
+    private static void buildTopo(Tensor node, Set<Tensor> visited, List<Tensor> out) {
+        if (!visited.add(node)) return;
+        TensorFunction fn = node.meta == null ? null : node.meta.gradFn;
+        if (fn != null) {
+            for (Tensor input : fn.getInputs()) {
+                buildTopo(input, visited, out);
+            }
+        }
+        out.add(node);
+    }
+
+    public static Tensor cat(int dim, Tensor... tensors) {
+        Preconditions.checkArgument(tensors != null && tensors.length > 0,
+                "cat requires at least one tensor");
+
+        Shape first = tensors[0].shape;
+        int ndim = first.dimensions();
+        Preconditions.checkArgument(dim >= 0 && dim < ndim,
+                "dim %s out of range for %sD tensor", dim, ndim);
+
+        int[] outDims = first.dims();
+        int[] sizesAlongDim = new int[tensors.length];
+        sizesAlongDim[0] = first.dim(dim);
+        int catTotal = first.dim(dim);
+
+        for (int i = 1; i < tensors.length; i++) {
+            Shape s = tensors[i].shape;
+            Preconditions.checkArgument(s.dimensions() == ndim,
+                    "cat: mismatched ndim at input %s", i);
+            for (int d = 0; d < ndim; d++) {
+                if (d == dim) continue;
+                Preconditions.checkArgument(s.dim(d) == first.dim(d),
+                        "cat: shapes differ at dim %s: %s vs %s", d, first, s);
+            }
+            sizesAlongDim[i] = s.dim(dim);
+            catTotal += s.dim(dim);
+        }
+        outDims[dim] = catTotal;
+        Shape outShape = new Shape(outDims);
+
+        int outer = 1;
+        for (int d = 0; d < dim; d++) outer *= first.dim(d);
+        int inner = 1;
+        for (int d = dim + 1; d < ndim; d++) inner *= first.dim(d);
+        int outDimStride = catTotal * inner;
+
+        Storage out = alloc(outShape.numel());
+        MemorySegment outSeg = out.segment();
+
+        int cursor = 0;
+        for (int k = 0; k < tensors.length; k++) {
+            Tensor t = tensors[k].isContiguous() ? tensors[k] : tensors[k].contiguous();
+            int sizeK = sizesAlongDim[k];
+            int inDimStride = sizeK * inner;
+            MemorySegment tSeg = t.storage.segment();
+            int tOff = t.offset;
+            for (int o = 0; o < outer; o++) {
+                int outBase = o * outDimStride + cursor * inner;
+                int inBase = tOff + o * inDimStride;
+                MemorySegment.copy(tSeg, (long) inBase * Float.BYTES,
+                        outSeg, (long) outBase * Float.BYTES,
+                        (long) sizeK * inner * Float.BYTES);
+            }
+            cursor += sizeK;
+        }
+
+        return wrapResult(out, outShape, new CatFn(dim, sizesAlongDim, tensors));
+    }
+
     private AutogradMeta meta() {
         if (meta == null)
             meta = new AutogradMeta();
         return meta;
     }
-
-    // ---- accessors ----
 
     public Storage getStorage() {
         return storage;
@@ -81,10 +205,6 @@ public class Tensor implements Cloneable {
 
     private void write(int idx, float val) {
         storage.segment().set(ValueLayout.JAVA_FLOAT, (long) idx * Float.BYTES, val);
-    }
-
-    private static Storage alloc(int numel) {
-        return NativeStorage.allocate(DType.F32, numel);
     }
 
     public Shape getShape() {
@@ -166,17 +286,6 @@ public class Tensor implements Cloneable {
         }
     }
 
-    private static void buildTopo(Tensor node, Set<Tensor> visited, List<Tensor> out) {
-        if (!visited.add(node)) return;
-        TensorFunction fn = node.meta == null ? null : node.meta.gradFn;
-        if (fn != null) {
-            for (Tensor input : fn.getInputs()) {
-                buildTopo(input, visited, out);
-            }
-        }
-        out.add(node);
-    }
-
     public float item() {
         if (shape.numel() != 1)
             throw new IllegalStateException("item() only valid on single-element tensors, got shape " + shape);
@@ -191,25 +300,20 @@ public class Tensor implements Cloneable {
         write(offset + shape.flatIndex(indices), val);
     }
 
+    // ----------------- //
+    // --- VIEW OPS  --- //
+    // ----------------- //
+
     public boolean isContiguous() {
         return shape.isContiguous();
     }
 
     public Tensor transpose() {
-        Tensor tensor = new Tensor(storage, shape.transpose(), offset, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.setGradFn(new TransposeFn(this));
-        }
-        return tensor;
+        return TransposeFn.apply(this);
     }
 
     public Tensor view(int... newDims) {
-        Shape newShape = shape.reshape(newDims);
-        Tensor tensor = new Tensor(storage, newShape, offset, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.setGradFn(new ViewFn(this));
-        }
-        return tensor;
+        return ViewFn.apply(this, newDims);
     }
 
     public Tensor contiguous() {
@@ -232,11 +336,7 @@ public class Tensor implements Cloneable {
             }
         }
 
-        Tensor tensor = new Tensor(dst, new Shape(shape.dims()), 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.setGradFn(new IdentityFn(this));
-        }
-        return tensor;
+        return wrapResult(dst, new Shape(shape.dims()), new IdentityFn(this));
     }
 
     @Override
@@ -245,83 +345,11 @@ public class Tensor implements Cloneable {
         Storage dst = alloc(capacity);
         MemorySegment.copy(storage.segment(), 0L, dst.segment(), 0L,
                 (long) capacity * Float.BYTES);
-        Tensor tensor = new Tensor(dst, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.setGradFn(new IdentityFn(this));
-        }
-        return tensor;
+        return wrapResult(dst, shape, new IdentityFn(this));
     }
 
     public Tensor detach() {
         return new Tensor(storage, shape, offset, false);
-    }
-
-    public static Tensor cat(int dim, Tensor... tensors) {
-        if (tensors == null || tensors.length == 0)
-            throw new IllegalArgumentException("cat requires at least one tensor");
-
-        Shape first = tensors[0].shape;
-        int ndim = first.dimensions();
-        if (dim < 0 || dim >= ndim)
-            throw new IllegalArgumentException("dim " + dim + " out of range for " + ndim + "D tensor");
-
-        int[] outDims = first.dims();
-        int[] sizesAlongDim = new int[tensors.length];
-        sizesAlongDim[0] = first.dim(dim);
-        int catTotal = first.dim(dim);
-
-        for (int i = 1; i < tensors.length; i++) {
-            Shape s = tensors[i].shape;
-            if (s.dimensions() != ndim)
-                throw new IllegalArgumentException("cat: mismatched ndim at input " + i);
-            for (int d = 0; d < ndim; d++) {
-                if (d == dim) continue;
-                if (s.dim(d) != first.dim(d))
-                    throw new IllegalArgumentException(
-                            "cat: shapes differ at dim " + d + ": "
-                                    + first + " vs " + s);
-            }
-            sizesAlongDim[i] = s.dim(dim);
-            catTotal += s.dim(dim);
-        }
-        outDims[dim] = catTotal;
-        Shape outShape = new Shape(outDims);
-
-        int outer = 1;
-        for (int d = 0; d < dim; d++) outer *= first.dim(d);
-        int inner = 1;
-        for (int d = dim + 1; d < ndim; d++) inner *= first.dim(d);
-        int outDimStride = catTotal * inner;
-
-        boolean grad = false;
-        for (Tensor t : tensors) {
-            if (t.requiresGrad) grad = true;
-        }
-        Storage out = alloc(outShape.numel());
-        MemorySegment outSeg = out.segment();
-
-        int cursor = 0;
-        for (int k = 0; k < tensors.length; k++) {
-            Tensor t = tensors[k].isContiguous() ? tensors[k] : tensors[k].contiguous();
-            int sizeK = sizesAlongDim[k];
-            int inDimStride = sizeK * inner;
-            MemorySegment tSeg = t.storage.segment();
-            int tOff = t.offset;
-            for (int o = 0; o < outer; o++) {
-                int outBase = o * outDimStride + cursor * inner;
-                int inBase = tOff + o * inDimStride;
-                MemorySegment.copy(tSeg, (long) inBase * Float.BYTES,
-                        outSeg, (long) outBase * Float.BYTES,
-                        (long) sizeK * inner * Float.BYTES);
-            }
-            cursor += sizeK;
-        }
-
-        Tensor result = new Tensor(out, outShape, 0, grad);
-        if (grad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new CatFn(dim, sizesAlongDim, tensors));
-        }
-        return result;
     }
 
     public Tensor indexSelect(int dim, int... indices) {
@@ -329,8 +357,8 @@ public class Tensor implements Cloneable {
             return contiguous().indexSelect(dim, indices);
 
         int ndim = shape.dimensions();
-        if (dim < 0 || dim >= ndim)
-            throw new IllegalArgumentException("dim " + dim + " out of range for " + ndim + "D tensor");
+        Preconditions.checkArgument(dim >= 0 && dim < ndim,
+                "dim %s out of range for %sD tensor", dim, ndim);
 
         int[] newDims = shape.dims();
         newDims[dim] = indices.length;
@@ -364,11 +392,7 @@ public class Tensor implements Cloneable {
             }
         }
 
-        Tensor result = new Tensor(out, new Shape(newDims), 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new IndexSelectFn(this, dim, indices));
-        }
-        return result;
+        return wrapResult(out, new Shape(newDims), new IndexSelectFn(this, dim, indices));
     }
 
     // -------------- //
@@ -376,45 +400,7 @@ public class Tensor implements Cloneable {
     // -------------- //
 
     public Tensor matmul(Tensor other) {
-        int aDim = shape.dimensions();
-        int bDim = other.shape.dimensions();
-
-        if (aDim > 3 || bDim > 3)
-            throw new IllegalArgumentException("matmul requires 2D or 3D tensors, got " + aDim + "D and " + bDim + "D");
-
-        // inner dimensions must agree
-        int k1 = shape.dim(aDim - 1);
-        int k2 = other.shape.dim(bDim - 2);
-        if (k1 != k2)
-            throw new IllegalArgumentException("matmul inner dimensions don't match: " + shape + " @ " + other.shape);
-
-        // compute result shape
-        int m = shape.dim(aDim - 2);
-        int n = other.shape.dim(bDim - 1);
-        Shape resultShape;
-
-        if (aDim == 2 && bDim == 2) {
-            resultShape = new Shape(m, n);
-        } else {
-            // 1 must be 3d... batch dimension
-            int batch;
-            if (aDim == 3 && bDim == 3) {
-                if (shape.dim(0) != other.shape.dim(0))
-                    throw new IllegalArgumentException("batch dimensions don't match: " + shape + " @ " + other.shape);
-                batch = shape.dim(0);
-            } else {
-                batch = aDim == 3 ? shape.dim(0) : other.shape.dim(0);
-            }
-            resultShape = new Shape(batch, m, n);
-        }
-
-        Storage resultData = Ops.matmul(this, other, resultShape);
-        boolean grad = this.requiresGrad || other.requiresGrad;
-        Tensor result = new Tensor(resultData, resultShape, 0, grad);
-        if (grad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new MatmulFn(this, other));
-        }
-        return result;
+        return MatmulFn.apply(this, other);
     }
 
     // ------------------ //
@@ -425,63 +411,29 @@ public class Tensor implements Cloneable {
         float val = Ops.sum(this);
         Storage out = alloc(1);
         out.segment().set(ValueLayout.JAVA_FLOAT, 0L, val);
-        Tensor result = new Tensor(out, new Shape(1, 1), 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new SumFn(this));
-        }
-        return result;
+        return wrapResult(out, new Shape(1, 1), new SumFn(this));
     }
 
     public Tensor sum(int dim) {
-        if (dim < 0 || dim >= shape.dimensions())
-            throw new IllegalArgumentException("dim " + dim + " out of range for " + shape.dimensions() + "D tensor");
-
-        Storage resultData = Ops.sumDim(this, dim);
-
-        // result shape: same as input but with dims[dim] = 1
-        int[] newDims = shape.dims();
-        newDims[dim] = 1;
-        Shape resultShape = new Shape(newDims);
-
-        Tensor result = new Tensor(resultData, resultShape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new SumDimFn(this, dim));
-        }
-        return result;
+        return SumDimFn.apply(this, dim);
     }
 
     public Tensor max(int dim) {
-        if (dim < 0 || dim >= shape.dimensions())
-            throw new IllegalArgumentException("dim " + dim + " out of range for " + shape.dimensions() + "D tensor");
-
-        Storage resultData = Ops.maxDim(this, dim);
-
-        int[] newDims = shape.dims();
-        newDims[dim] = 1;
-        Shape resultShape = new Shape(newDims);
-
-        Tensor result = new Tensor(resultData, resultShape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new MaxDimFn(this, result.detach(), dim));
-        }
-        return result;
+        return MaxDimFn.apply(this, dim);
     }
 
     public Tensor argmax(int dim) {
-        if (dim < 0 || dim >= shape.dimensions())
-            throw new IllegalArgumentException("dim " + dim + " out of range for " + shape.dimensions() + "D tensor");
-
+        Preconditions.checkArgument(dim >= 0 && dim < shape.dimensions(),
+                "dim %s out of range for %sD tensor", dim, shape.dimensions());
         Storage resultData = Ops.argmaxDim(this, dim);
-
         int[] newDims = shape.dims();
         newDims[dim] = 1;
         return new Tensor(resultData, new Shape(newDims), 0, false);
     }
 
     public Tensor logSoftmax(int dim) {
-        if (dim < 0 || dim >= shape.dimensions())
-            throw new IllegalArgumentException("dim " + dim + " out of range for " + shape.dimensions() + "D tensor");
-
+        Preconditions.checkArgument(dim >= 0 && dim < shape.dimensions(),
+                "dim %s out of range for %sD tensor", dim, shape.dimensions());
         Tensor maxes = this.max(dim);
         Tensor shifted = this.sub(maxes);
         Tensor sumExp = shifted.exp().sum(dim);
@@ -490,9 +442,8 @@ public class Tensor implements Cloneable {
     }
 
     public Tensor softmax(int dim) {
-        if (dim < 0 || dim >= shape.dimensions())
-            throw new IllegalArgumentException("dim " + dim + " out of range for " + shape.dimensions() + "D tensor");
-
+        Preconditions.checkArgument(dim >= 0 && dim < shape.dimensions(),
+                "dim %s out of range for %sD tensor", dim, shape.dimensions());
         Tensor shifted = this.sub(this.max(dim).detach());
         Tensor expd = shifted.exp();
         return expd.div(expd.sum(dim));
@@ -500,9 +451,8 @@ public class Tensor implements Cloneable {
 
     public Tensor maskedSoftmax(Tensor mask, int dim) {
         // https://mcognetta.github.io/posts/masked_softmax/
-        if (dim < 0 || dim >= shape.dimensions())
-            throw new IllegalArgumentException("dim " + dim + " out of range for " + shape.dimensions() + "D tensor");
-
+        Preconditions.checkArgument(dim >= 0 && dim < shape.dimensions(),
+                "dim %s out of range for %sD tensor", dim, shape.dimensions());
         Tensor m = mask.requiresGrad() ? mask.detach() : mask;
         return this.add(m.rsub(1f).mul(-1e30f)).softmax(dim);
     }
@@ -511,34 +461,35 @@ public class Tensor implements Cloneable {
         float val = Ops.mean(this);
         Storage out = alloc(1);
         out.segment().set(ValueLayout.JAVA_FLOAT, 0L, val);
-        Tensor result = new Tensor(out, new Shape(1, 1), 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new MeanFn(this));
-        }
-        return result;
+        return wrapResult(out, new Shape(1, 1), new MeanFn(this));
     }
 
     // -------------------------- //
     // --- UNARY ELEMENT-WISE --- //
     // -------------------------- //
 
-
     public Tensor tanh() {
-        Storage resultData = Ops.unaryOp(TANH, this);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new TanhFn(this, result.detach()));
-        }
-        return result;
+        return TanhFn.apply(this);
     }
 
     public Tensor abs() {
-        Storage resultData = Ops.unaryOp(ABS, this);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new AbsFn(this));
-        }
-        return result;
+        return AbsFn.apply(this);
+    }
+
+    public Tensor exp() {
+        return ExpFn.apply(this);
+    }
+
+    public Tensor log() {
+        return LogFn.apply(this);
+    }
+
+    public Tensor sqrt() {
+        return SqrtFn.apply(this);
+    }
+
+    public Tensor square() {
+        return SquareFn.apply(this);
     }
 
     public Tensor abs_() {
@@ -547,28 +498,10 @@ public class Tensor implements Cloneable {
         return this;
     }
 
-    public Tensor exp() {
-        Storage resultData = Ops.unaryOp(EXP, this);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new ExpFn(this, result.detach()));
-        }
-        return result;
-    }
-
     public Tensor exp_() {
         checkInPlaceSafe();
         Ops.unaryOp(EXP, this, storage);
         return this;
-    }
-
-    public Tensor log() {
-        Storage resultData = Ops.unaryOp(LOG, this);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new LogFn(this));
-        }
-        return result;
     }
 
     public Tensor log_() {
@@ -577,29 +510,10 @@ public class Tensor implements Cloneable {
         return this;
     }
 
-    public Tensor sqrt() {
-        Storage resultData = Ops.unaryOp(SQRT, this);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new SqrtFn(this, result.detach()));
-        }
-        return result;
-    }
-
     public Tensor sqrt_() {
         checkInPlaceSafe();
         Ops.unaryOp(SQRT, this, storage);
         return this;
-    }
-
-    public Tensor square() {
-        // TODO: make optimized kernel
-        Storage resultData = Ops.binaryOp(MUL, this, this, shape);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new SquareFn(this));
-        }
-        return result;
     }
 
     public Tensor square_() {
@@ -613,35 +527,113 @@ public class Tensor implements Cloneable {
     // --------------------------- //
 
     public Tensor add(Tensor other) {
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
+        return AddFn.apply(this, other);
+    }
 
-        Storage resultData = Ops.binaryOp(ADD, this, other, resultShape);
-        boolean grad = this.requiresGrad || other.requiresGrad;
-        Tensor result = new Tensor(resultData, resultShape, 0, grad);
-        if (grad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new AddFn(this, other));
-        }
-        return result;
+    public Tensor sub(Tensor other) {
+        return SubFn.apply(this, other);
+    }
+
+    public Tensor mul(Tensor other) {
+        return MulFn.apply(this, other);
+    }
+
+    public Tensor div(Tensor other) {
+        return DivFn.apply(this, other);
+    }
+
+    public Tensor max(Tensor other) {
+        return MaxFn.apply(this, other);
+    }
+
+    public Tensor min(Tensor other) {
+        return MinFn.apply(this, other);
+    }
+
+    public Tensor add(float other) {
+        return AddConstFn.applyAdd(this, other);
+    }
+
+    public Tensor sub(float other) {
+        return AddConstFn.applySub(this, other);
+    }
+
+    public Tensor mul(float other) {
+        return MulConstFn.apply(this, other);
+    }
+
+    public Tensor div(float other) {
+        return DivConstFn.apply(this, other);
+    }
+
+    public Tensor max(float other) {
+        return MaxConstFn.apply(this, other);
+    }
+
+    public Tensor min(float other) {
+        return MinConstFn.apply(this, other);
+    }
+
+    public Tensor rsub(float other) {
+        return SubRConstFn.apply(other, this);
+    }
+
+    public Tensor rdiv(float other) {
+        return DivRConstFn.apply(other, this);
     }
 
     public Tensor add_(Tensor other) {
         checkInPlaceSafe();
         Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (!resultShape.equals(this.shape))
-            throw new IllegalArgumentException("in-place: result shape must equal this.shape");
+        Preconditions.checkArgument(resultShape.equals(this.shape),
+                "in-place: result shape must equal this.shape");
         Ops.binaryOp(ADD, this, other, resultShape, storage);
         return this;
     }
 
-    public Tensor add(float other) {
-        Storage resultData = Ops.binaryOpConst(ADD, this, other);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new AddConstFn(this, other));
-        }
-        return result;
+    public Tensor sub_(Tensor other) {
+        checkInPlaceSafe();
+        Shape resultShape = this.shape.broadcastWith(other.shape);
+        Preconditions.checkArgument(resultShape.equals(this.shape),
+                "in-place: result shape must equal this.shape");
+        Ops.binaryOp(SUB, this, other, resultShape, storage);
+        return this;
+    }
+
+    public Tensor mul_(Tensor other) {
+        checkInPlaceSafe();
+        Shape resultShape = this.shape.broadcastWith(other.shape);
+        Preconditions.checkArgument(resultShape.equals(this.shape),
+                "in-place: result shape must equal this.shape");
+        Ops.binaryOp(MUL, this, other, resultShape, storage);
+        return this;
+    }
+
+    public Tensor div_(Tensor other) {
+        checkInPlaceSafe();
+        Shape resultShape = this.shape.broadcastWith(other.shape);
+        Preconditions.checkArgument(resultShape.equals(this.shape),
+                "in-place: result shape must equal this.shape");
+        Ops.binaryOp(DIV, this, other, resultShape, storage);
+        return this;
+    }
+
+    public Tensor max_(Tensor other) {
+        checkInPlaceSafe();
+        Shape resultShape = this.shape.broadcastWith(other.shape);
+        Preconditions.checkArgument(resultShape.equals(this.shape),
+                "in-place: result shape must equal this.shape");
+        Ops.binaryOp(MAX, this, other, resultShape, storage);
+        return this;
+    }
+
+    public Tensor min_(Tensor other) {
+        checkInPlaceSafe();
+        Shape resultShape = this.shape.broadcastWith(other.shape);
+        Preconditions.checkArgument(resultShape.equals(this.shape),
+                "in-place: result shape must equal this.shape");
+        Ops.binaryOp(MIN, this, other, resultShape, storage);
+        return this;
     }
 
     public Tensor add_(float other) {
@@ -650,89 +642,10 @@ public class Tensor implements Cloneable {
         return this;
     }
 
-    public Tensor sub(Tensor other) {
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException(
-                    "cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Storage resultData = Ops.binaryOp(SUB, this, other, resultShape);
-        boolean grad = this.requiresGrad || other.requiresGrad;
-        Tensor result = new Tensor(resultData, resultShape, 0, grad);
-        if (grad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new SubFn(this, other));
-        }
-        return result;
-    }
-
-    public Tensor sub_(Tensor other) {
-        checkInPlaceSafe();
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (!resultShape.equals(this.shape))
-            throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(SUB, this, other, resultShape, storage);
-        return this;
-    }
-
-    public Tensor sub(float other) {
-        Storage resultData = Ops.binaryOpConst(SUB, this, other);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new AddConstFn(this, other));
-        }
-        return result;
-    }
-
     public Tensor sub_(float other) {
         checkInPlaceSafe();
         Ops.binaryOpConst(SUB, this, other, storage);
         return this;
-    }
-
-    public Tensor rsub(float other) {
-        Storage resultData = Ops.rbinaryOpConst(SUB, other, this);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new SubRConstFn(other, this));
-        }
-        return result;
-    }
-
-    public Tensor rsub_(float other) {
-        checkInPlaceSafe();
-        Ops.rbinaryOpConst(SUB, other, this, storage);
-        return this;
-    }
-
-    public Tensor mul(Tensor other) {
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException(
-                    "cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Storage resultData = Ops.binaryOp(MUL, this, other, resultShape);
-        boolean grad = this.requiresGrad || other.requiresGrad;
-        Tensor result = new Tensor(resultData, resultShape, 0, grad);
-        if (grad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new MulFn(this, other));
-        }
-        return result;
-    }
-
-    public Tensor mul_(Tensor other) {
-        checkInPlaceSafe();
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (!resultShape.equals(this.shape))
-            throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(MUL, this, other, resultShape, storage);
-        return this;
-    }
-
-    public Tensor mul(float other) {
-        Storage resultData = Ops.binaryOpConst(MUL, this, other);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new MulConstFn(this, other));
-        }
-        return result;
     }
 
     public Tensor mul_(float other) {
@@ -741,90 +654,10 @@ public class Tensor implements Cloneable {
         return this;
     }
 
-    public Tensor div(Tensor other) {
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException(
-                    "cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Storage resultData = Ops.binaryOp(DIV, this, other, resultShape);
-        boolean grad = this.requiresGrad || other.requiresGrad;
-        Tensor result = new Tensor(resultData, resultShape, 0, grad);
-        if (grad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new DivFn(this, other));
-        }
-        return result;
-    }
-
-    public Tensor div_(Tensor other) {
-        checkInPlaceSafe();
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (!resultShape.equals(this.shape))
-            throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(DIV, this, other, resultShape, storage);
-        return this;
-    }
-
-    public Tensor div(float other) {
-        Storage resultData = Ops.binaryOpConst(DIV, this, other);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new DivConstFn(this, other));
-        }
-        return result;
-    }
-
     public Tensor div_(float other) {
         checkInPlaceSafe();
         Ops.binaryOpConst(DIV, this, other, storage);
         return this;
-    }
-
-    public Tensor rdiv(float other) {
-        Storage resultData = Ops.rbinaryOpConst(DIV, other, this);
-        Tensor result = new Tensor(resultData, shape, 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new DivRConstFn(other, this));
-        }
-        return result;
-    }
-
-    public Tensor rdiv_(float other) {
-        checkInPlaceSafe();
-        Ops.rbinaryOpConst(DIV, other, this, storage);
-        return this;
-    }
-
-    public Tensor max(Tensor other) {
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Storage resultData = Ops.binaryOp(MAX, this, other, resultShape);
-        boolean grad = this.requiresGrad || other.requiresGrad;
-        Tensor result = new Tensor(resultData, resultShape, 0, grad);
-        if (grad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new MaxFn(this, other));
-        }
-        return result;
-    }
-
-    public Tensor max_(Tensor other) {
-        checkInPlaceSafe();
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (!resultShape.equals(this.shape))
-            throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(MAX, this, other, resultShape, storage);
-        return this;
-    }
-
-    public Tensor max(float other) {
-        Storage resultData = Ops.binaryOpConst(MAX, this, other);
-        // relu is a special case where we definitely don't need to change the order
-        // at all or make it contiguous... we just need the shape to match exactly.
-        Tensor tensor = new Tensor(resultData, new Shape(shape.dims(), shape.strides()), 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.setGradFn(new MaxConstFn(this, other));
-        }
-        return tensor;
     }
 
     public Tensor max_(float other) {
@@ -833,40 +666,21 @@ public class Tensor implements Cloneable {
         return this;
     }
 
-    public Tensor min(Tensor other) {
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Storage resultData = Ops.binaryOp(MIN, this, other, resultShape);
-        boolean grad = this.requiresGrad || other.requiresGrad;
-        Tensor result = new Tensor(resultData, resultShape, 0, grad);
-        if (grad && Tensor4j.isGradEnabled()) {
-            result.setGradFn(new MinFn(this, other));
-        }
-        return result;
-    }
-
-    public Tensor min_(Tensor other) {
-        checkInPlaceSafe();
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (!resultShape.equals(this.shape))
-            throw new IllegalArgumentException("in-place: result shape must equal this.shape");
-        Ops.binaryOp(MIN, this, other, resultShape, storage);
-        return this;
-    }
-
-    public Tensor min(float other) {
-        Storage resultData = Ops.binaryOpConst(MIN, this, other);
-        Tensor tensor = new Tensor(resultData, new Shape(shape.dims(), shape.strides()), 0, requiresGrad);
-        if (requiresGrad && Tensor4j.isGradEnabled()) {
-            tensor.setGradFn(new MinConstFn(this, other));
-        }
-        return tensor;
-    }
-
     public Tensor min_(float other) {
         checkInPlaceSafe();
         Ops.binaryOpConst(MIN, this, other, storage);
+        return this;
+    }
+
+    public Tensor rsub_(float other) {
+        checkInPlaceSafe();
+        Ops.rbinaryOpConst(SUB, other, this, storage);
+        return this;
+    }
+
+    public Tensor rdiv_(float other) {
+        checkInPlaceSafe();
+        Ops.rbinaryOpConst(DIV, other, this, storage);
         return this;
     }
 
@@ -874,177 +688,113 @@ public class Tensor implements Cloneable {
     // --- COMPARISON ELEMENT-WISE --- //
     // ------------------------------- //
 
-    public Tensor eq(Tensor other) {
+    private Tensor compareTensor(jdk.incubator.vector.VectorOperators.Comparison op, Tensor other) {
         Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Storage resultData = Ops.comparisonOp(EQ, this, other, resultShape);
-        // always no grad... gradient is strictly 0
+        Preconditions.checkArgument(resultShape != null,
+                "cannot broadcast shapes %s and %s", this.shape, other.shape);
+        Storage resultData = Ops.comparisonOp(op, this, other, resultShape);
         return new Tensor(resultData, resultShape, 0, false);
     }
 
-    public Tensor eq_(Tensor other) {
+    private Tensor compareTensorInPlace(jdk.incubator.vector.VectorOperators.Comparison op, Tensor other) {
         checkInPlaceSafe();
         Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (!this.shape.equals(resultShape))
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Ops.comparisonOp(EQ, this, other, resultShape, storage);
+        Preconditions.checkArgument(resultShape != null && this.shape.equals(resultShape),
+                "cannot broadcast shapes %s and %s", this.shape, other.shape);
+        Ops.comparisonOp(op, this, other, resultShape, storage);
         return this;
     }
 
-    public Tensor eq(float other) {
-        Storage resultData = Ops.comparisonOpConst(EQ, this, other);
-        // always no grad... gradient is strictly 0
+    private Tensor compareConst(jdk.incubator.vector.VectorOperators.Comparison op, float other) {
+        Storage resultData = Ops.comparisonOpConst(op, this, other);
         return new Tensor(resultData, shape, 0, false);
     }
 
-    public Tensor eq_(float other) {
+    private Tensor compareConstInPlace(jdk.incubator.vector.VectorOperators.Comparison op, float other) {
         checkInPlaceSafe();
-        Ops.comparisonOpConst(EQ, this, other, storage);
-        // always no grad... gradient is strictly 0
+        Ops.comparisonOpConst(op, this, other, storage);
         return this;
+    }
+
+    public Tensor eq(Tensor other) {
+        return compareTensor(EQ, other);
     }
 
     public Tensor lt(Tensor other) {
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Storage resultData = Ops.comparisonOp(LT, this, other, resultShape);
-        // always no grad... gradient is strictly 0
-        return new Tensor(resultData, resultShape, 0, false);
-    }
-
-    public Tensor lt_(Tensor other) {
-        checkInPlaceSafe();
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (!this.shape.equals(resultShape))
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Ops.comparisonOp(LT, this, other, resultShape, storage);
-        // always no grad... gradient is strictly 0
-        return this;
-    }
-
-    public Tensor lt(float other) {
-        Storage resultData = Ops.comparisonOpConst(LT, this, other);
-        // always no grad... gradient is strictly 0
-        return new Tensor(resultData, shape, 0, false);
-    }
-
-    public Tensor lt_(float other) {
-        checkInPlaceSafe();
-        Ops.comparisonOpConst(LT, this, other, storage);
-        // always no grad... gradient is strictly 0
-        return this;
+        return compareTensor(LT, other);
     }
 
     public Tensor le(Tensor other) {
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Storage resultData = Ops.comparisonOp(LE, this, other, resultShape);
-        // always no grad... gradient is strictly 0
-        return new Tensor(resultData, resultShape, 0, false);
-    }
-
-    public Tensor le_(Tensor other) {
-        checkInPlaceSafe();
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (!this.shape.equals(resultShape))
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Ops.comparisonOp(LE, this, other, resultShape, storage);
-        // always no grad... gradient is strictly 0
-        return this;
-    }
-
-    public Tensor le(float other) {
-        Storage resultData = Ops.comparisonOpConst(LE, this, other);
-        // always no grad... gradient is strictly 0
-        return new Tensor(resultData, shape, 0, false);
-    }
-
-    public Tensor le_(float other) {
-        checkInPlaceSafe();
-        Ops.comparisonOpConst(LE, this, other, storage);
-        // always no grad... gradient is strictly 0
-        return this;
+        return compareTensor(LE, other);
     }
 
     public Tensor gt(Tensor other) {
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Storage resultData = Ops.comparisonOp(GT, this, other, resultShape);
-        // always no grad... gradient is strictly 0
-        return new Tensor(resultData, resultShape, 0, false);
-    }
-
-    public Tensor gt_(Tensor other) {
-        checkInPlaceSafe();
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (this.shape.equals(resultShape))
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Ops.comparisonOp(GT, this, other, resultShape, storage);
-        // always no grad... gradient is strictly 0
-        return this;
-    }
-
-    public Tensor gt(float other) {
-        Storage resultData = Ops.comparisonOpConst(GT, this, other);
-        // always no grad... gradient is strictly 0
-        return new Tensor(resultData, shape, 0, false);
-    }
-
-    public Tensor gt_(float other) {
-        Ops.comparisonOpConst(GT, this, other, storage);
-        // always no grad... gradient is strictly 0
-        return this;
+        return compareTensor(GT, other);
     }
 
     public Tensor ge(Tensor other) {
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (resultShape == null)
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Storage resultData = Ops.comparisonOp(GE, this, other, resultShape);
-        // always no grad... gradient is strictly 0
-        return new Tensor(resultData, resultShape, 0, false);
+        return compareTensor(GE, other);
+    }
+
+    public Tensor eq_(Tensor other) {
+        return compareTensorInPlace(EQ, other);
+    }
+
+    public Tensor lt_(Tensor other) {
+        return compareTensorInPlace(LT, other);
+    }
+
+    public Tensor le_(Tensor other) {
+        return compareTensorInPlace(LE, other);
+    }
+
+    public Tensor gt_(Tensor other) {
+        return compareTensorInPlace(GT, other);
     }
 
     public Tensor ge_(Tensor other) {
-        checkInPlaceSafe();
-        Shape resultShape = this.shape.broadcastWith(other.shape);
-        if (!this.shape.equals(resultShape))
-            throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + other.shape);
-        Ops.comparisonOp(GE, this, other, resultShape, storage);
-        // always no grad... gradient is strictly 0
-        return this;
+        return compareTensorInPlace(GE, other);
+    }
+
+    public Tensor eq(float other) {
+        return compareConst(EQ, other);
+    }
+
+    public Tensor lt(float other) {
+        return compareConst(LT, other);
+    }
+
+    public Tensor le(float other) {
+        return compareConst(LE, other);
+    }
+
+    public Tensor gt(float other) {
+        return compareConst(GT, other);
     }
 
     public Tensor ge(float other) {
-        Storage resultData = Ops.comparisonOpConst(GE, this, other);
-        // always no grad... gradient is strictly 0
-        return new Tensor(resultData, shape, 0, false);
+        return compareConst(GE, other);
+    }
+
+    public Tensor eq_(float other) {
+        return compareConstInPlace(EQ, other);
+    }
+
+    public Tensor lt_(float other) {
+        return compareConstInPlace(LT, other);
+    }
+
+    public Tensor le_(float other) {
+        return compareConstInPlace(LE, other);
+    }
+
+    public Tensor gt_(float other) {
+        return compareConstInPlace(GT, other);
     }
 
     public Tensor ge_(float other) {
-        checkInPlaceSafe();
-        Ops.comparisonOpConst(GE, this, other, storage);
-        // always no grad... gradient is strictly 0
-        return this;
+        return compareConstInPlace(GE, other);
     }
-
-    // ---------------------------- //
-    // --- TERNARY ELEMENT-WISE --- //
-    // ---------------------------- //
-
-    //public Tensor fma(Tensor b, Tensor c) {
-    //    Shape resultShape = this.shape.broadcastWith(b.shape);
-    //    if (resultShape == null)
-    //        throw new IllegalArgumentException("cannot broadcast shapes " + this.shape + " and " + b.shape);
-    //    float[] resultData = new float[resultShape.numel()];
-    //    Ops.ternaryOp(FMA, this, b, c, resultShape, resultData);
-    //    // always no grad... gradient is strictly 0
-    //    return new Tensor(resultData, resultShape, 0, false);
-    //}
 
     // --------------------------- //
     // --- MISC / JAVA METHODS --- //

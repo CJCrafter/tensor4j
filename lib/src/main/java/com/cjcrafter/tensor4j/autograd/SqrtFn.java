@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.SQRT;
+
 /**
  * Backward for {@code sqrt(A)}.
  *
@@ -10,6 +12,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * }</pre>
  */
 public class SqrtFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a) {
+        return applyUnaryCached(SQRT, SqrtFn::new, a);
+    }
 
     private final Tensor result;
 

@@ -1,7 +1,8 @@
 package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
-import com.cjcrafter.tensor4j.TensorBuilder;
+
+import static jdk.incubator.vector.VectorOperators.SUB;
 
 /**
  * Backward for {@code C = a - B}.
@@ -11,6 +12,10 @@ import com.cjcrafter.tensor4j.TensorBuilder;
  * }</pre>
  */
 public class SubRConstFn extends TensorFunction {
+
+    public static Tensor apply(float a, Tensor b) {
+        return applyRBinaryConst(SUB, t -> new SubRConstFn(a, t), a, b);
+    }
 
     public SubRConstFn(float a, Tensor b) {
         super(b);

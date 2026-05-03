@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.MIN;
+
 /**
  * Backward for {@code min(x, b)} with constant {@code b}.
  *
@@ -12,6 +14,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * <p>Mirrors {@link MaxConstFn}.
  */
 public class MinConstFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a, float b) {
+        return applyBinaryConst(MIN, t -> new MinConstFn(t, b), a, b);
+    }
 
     private final float b;
 

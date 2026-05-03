@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.DIV;
+
 /**
  * Backward for {@code C = a / B} (scalar dividend).
  *
@@ -10,6 +12,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * }</pre>
  */
 public class DivRConstFn extends TensorFunction {
+
+    public static Tensor apply(float a, Tensor b) {
+        return applyRBinaryConst(DIV, t -> new DivRConstFn(a, t), a, b);
+    }
 
     private final float a;
 

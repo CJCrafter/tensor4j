@@ -2,6 +2,8 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.TANH;
+
 /**
  * Backward for {@code tanh(a)}.
  *
@@ -10,6 +12,10 @@ import com.cjcrafter.tensor4j.Tensor;
  * }</pre>
  */
 public class TanhFn extends TensorFunction {
+
+    public static Tensor apply(Tensor a) {
+        return applyUnaryCached(TANH, TanhFn::new, a);
+    }
 
     private final Tensor result;
 

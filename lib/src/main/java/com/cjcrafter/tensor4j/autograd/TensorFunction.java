@@ -3,8 +3,14 @@ package com.cjcrafter.tensor4j.autograd;
 import com.cjcrafter.tensor4j.Shape;
 import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.TensorBuilder;
+import com.cjcrafter.tensor4j.memory.Storage;
+import com.cjcrafter.tensor4j.ops.Ops;
+import com.google.common.base.Preconditions;
+import jdk.incubator.vector.VectorOperators;
 
 import java.util.Arrays;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
 /**
  * Base class for all autograd operations. Each op records which tensors
@@ -31,6 +37,46 @@ public abstract class TensorFunction {
      * Returns one gradient per input, same order as {@link #inputs}.
      */
     public abstract Tensor[] backward(Tensor gradOutput);
+
+
+    protected static Tensor applyBinary(VectorOperators.Binary op,
+                                        BiFunction<Tensor, Tensor, TensorFunction> fnFactory,
+                                        Tensor a, Tensor b) {
+        Shape resultShape = a.getShape().broadcastWith(b.getShape());
+        Preconditions.checkArgument(resultShape != null,
+                "cannot broadcast shapes %s and %s", a.getShape(), b.getShape());
+        Storage out = Ops.binaryOp(op, a, b, resultShape);
+        return Tensor.wrapResult(out, resultShape, fnFactory.apply(a, b));
+    }
+
+    protected static Tensor applyUnary(VectorOperators.Unary op,
+                                       Function<Tensor, TensorFunction> fnFactory,
+                                       Tensor a) {
+        Storage out = Ops.unaryOp(op, a);
+        return Tensor.wrapResult(out, a.getShape(), fnFactory.apply(a));
+    }
+
+    protected static Tensor applyUnaryCached(VectorOperators.Unary op,
+                                             BiFunction<Tensor, Tensor, TensorFunction> fnFactory,
+                                             Tensor a) {
+        Storage out = Ops.unaryOp(op, a);
+        return Tensor.wrapResultDeferred(out, a.getShape(), new Tensor[]{a},
+                cached -> fnFactory.apply(a, cached));
+    }
+
+    protected static Tensor applyBinaryConst(VectorOperators.Binary op,
+                                             Function<Tensor, TensorFunction> fnFactory,
+                                             Tensor a, float b) {
+        Storage out = Ops.binaryOpConst(op, a, b);
+        return Tensor.wrapResult(out, a.getShape(), fnFactory.apply(a));
+    }
+
+    protected static Tensor applyRBinaryConst(VectorOperators.Binary op,
+                                              Function<Tensor, TensorFunction> fnFactory,
+                                              float a, Tensor b) {
+        Storage out = Ops.rbinaryOpConst(op, a, b);
+        return Tensor.wrapResult(out, b.getShape(), fnFactory.apply(b));
+    }
 
     /**
      * Sum grad along any dimension that was broadcast.

@@ -2,6 +2,9 @@ package com.cjcrafter.tensor4j.autograd;
 
 import com.cjcrafter.tensor4j.Tensor;
 
+import static jdk.incubator.vector.VectorOperators.ADD;
+import static jdk.incubator.vector.VectorOperators.SUB;
+
 /**
  * Backward for {@code C = A + b} (or {@code C = A - b}).
  *
@@ -10,6 +13,14 @@ import com.cjcrafter.tensor4j.Tensor;
  * }</pre>
  */
 public class AddConstFn extends TensorFunction {
+
+    public static Tensor applyAdd(Tensor a, float b) {
+        return applyBinaryConst(ADD, t -> new AddConstFn(t, b), a, b);
+    }
+
+    public static Tensor applySub(Tensor a, float b) {
+        return applyBinaryConst(SUB, t -> new AddConstFn(t, b), a, b);
+    }
 
     public AddConstFn(Tensor a, float b) {
         super(a);
