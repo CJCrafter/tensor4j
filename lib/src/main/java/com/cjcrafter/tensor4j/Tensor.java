@@ -5,6 +5,7 @@ import com.cjcrafter.tensor4j.memory.NativeStorage;
 import com.cjcrafter.tensor4j.memory.Storage;
 import com.cjcrafter.tensor4j.ops.Ops;
 import com.google.common.base.Preconditions;
+import org.jetbrains.annotations.ApiStatus;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -310,6 +311,14 @@ public class Tensor implements Cloneable {
 
     public Tensor transpose() {
         return TransposeFn.apply(this);
+    }
+
+    /**
+     * Reinterprets this tensor's dims in reverse order; not tracked by autograd.
+     */
+    @ApiStatus.Internal
+    public Tensor reverseDims() {
+        return new Tensor(storage, shape.reverseDims(), offset, false);
     }
 
     public Tensor view(int... newDims) {

@@ -190,7 +190,7 @@ public final class NpyFormat {
             return TensorBuilder.builder()
                     .shape(reversed)
                     .fromArray(data)
-                    .transpose()
+                    .reverseDims()
                     .contiguous();
         }
 

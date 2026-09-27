@@ -11,6 +11,7 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
     implementation(libs.guava)
+    implementation(libs.jetbrains.annotations)
 }
 
 java {

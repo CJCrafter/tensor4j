@@ -1,5 +1,8 @@
 package com.cjcrafter.tensor4j;
 
+import com.google.common.base.Preconditions;
+import org.jetbrains.annotations.ApiStatus;
+
 import java.util.Arrays;
 
 /**
@@ -68,16 +71,29 @@ public final class Shape {
     }
 
     /**
-     * Returns a new shape that is the transpose of this shape.
-     *
-     * <p>The returned shape will typically no longer be contiguous. Instead,
-     * the strides of the shape will be updated to allow logical ordering.
-     *
-     * <p>For example, the transpose of {@code (3, 4)} is {@code (4, 3)}.
-     *
-     * @return The transposed shape.
+     * Swaps the last two dimensions (matrix transpose). For a 2D shape this
+     * is the conventional transpose; for batched ND shapes the batch dims
+     * are preserved and only the last two are swapped.
      */
     public Shape transpose() {
+        int n = dims.length;
+        Preconditions.checkState(n >= 2, "transpose requires at least 2 dimensions, got %s", n);
+        int[] newDims = dims.clone();
+        int[] newStrides = strides.clone();
+        newDims[n - 1] = dims[n - 2];
+        newDims[n - 2] = dims[n - 1];
+        newStrides[n - 1] = strides[n - 2];
+        newStrides[n - 2] = strides[n - 1];
+        return new Shape(newDims, newStrides);
+    }
+
+    /**
+     * Reverses the order of all dimensions. Used by readers of column-major
+     * (Fortran-order) data to reinterpret it as row-major. For 2D this is
+     * equivalent to {@link #transpose()}.
+     */
+    @ApiStatus.Internal
+    public Shape reverseDims() {
         int n = dims.length;
         int[] newDims = new int[n];
         int[] newStrides = new int[n];

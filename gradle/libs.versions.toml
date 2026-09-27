@@ -4,7 +4,9 @@
 [versions]
 guava = "33.3.1-jre"
 junit-jupiter = "5.11.1"
+jetbrains-annotations = "26.0.2"
 
 [libraries]
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
+jetbrains-annotations = { module = "org.jetbrains:annotations", version.ref = "jetbrains-annotations" }

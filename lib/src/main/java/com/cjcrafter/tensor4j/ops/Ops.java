@@ -11,6 +11,8 @@ import com.cjcrafter.tensor4j.memory.Storage;
 import com.google.common.base.Preconditions;
 import jdk.incubator.vector.VectorOperators;
 
+import java.util.Arrays;
+
 /**
  * Tensor-level dispatcher. Resolves the right {@link Backend} for the inputs,
  * pulls the appropriate kernel table, allocates result {@link Storage}, and
@@ -32,17 +34,10 @@ public final class Ops {
     }
 
     /**
-     * Matrix multiply with batch support.
-     *
-     * <p>Supported cases:
-     * <ul>
-     *   <li>(m, k) @ (k, n) -> (m, n)</li>
-     *   <li>(b, m, k) @ (b, k, n) -> (b, m, n)</li>
-     *   <li>(b, m, k) @ (k, n) -> (b, m, n)</li>
-     *   <li>(m, k) @ (b, k, n) -> (b, m, n)</li>
-     * </ul>
-     *
-     * <p>Both inputs are forced contiguous before dispatch.
+     * Matrix multiply with N-D batched broadcasting (PyTorch semantics):
+     * the last two dims of each input are the matrix dims; everything before
+     * is a batch shape, broadcast against the other input's batch shape.
+     * Both inputs are forced contiguous before dispatch.
      */
     public static Storage matmul(Tensor a, Tensor b, Shape resultShape) {
         if (!a.isContiguous()) a = a.contiguous();
@@ -50,39 +45,91 @@ public final class Ops {
 
         Shape aShape = a.getShape();
         Shape bShape = b.getShape();
+        int aDim = aShape.dimensions();
+        int bDim = bShape.dimensions();
+
+        int m = aShape.dim(aDim - 2);
+        int kDim = aShape.dim(aDim - 1);
+        int n = bShape.dim(bDim - 1);
+
         Storage out = alloc(a, resultShape.numel());
         // matmul accumulates into c; native blocks are not zero-initialized
         out.segment().fill((byte) 0);
 
         F32KernelTable k = f32(a);
 
-        if (aShape.dimensions() == 2 && bShape.dimensions() == 2) {
-            int m = aShape.dim(0), kDim = aShape.dim(1), n = bShape.dim(1);
+        // Fast path: plain 2D @ 2D, no batching.
+        if (aDim == 2 && bDim == 2) {
             k.matmul(a.getStorage(), a.getOffset(), m, kDim,
                     b.getStorage(), b.getOffset(), n,
                     out, 0);
-        } else {
-            int batches = resultShape.dim(0);
-            int m = resultShape.dim(1);
-            int n = resultShape.dim(2);
+            return out;
+        }
 
-            boolean aBatched = aShape.dimensions() == 3;
-            boolean bBatched = bShape.dimensions() == 3;
+        // Batched path. Output batch shape is everything before the last 2 dims.
+        int outNdim = resultShape.dimensions();
+        int batchNdim = outNdim - 2;
+        int[] outBatch = Arrays.copyOf(resultShape.dims(), batchNdim);
 
-            int kDim = aBatched ? aShape.dim(2) : aShape.dim(1);
-            int aSliceSize = m * kDim;
-            int bSliceSize = kDim * n;
-            int cSliceSize = m * n;
+        int[] aBatchPadded = padLeftWithOnes(Arrays.copyOf(aShape.dims(), aDim - 2), batchNdim);
+        int[] bBatchPadded = padLeftWithOnes(Arrays.copyOf(bShape.dims(), bDim - 2), batchNdim);
 
-            for (int batch = 0; batch < batches; batch++) {
-                int aOff = a.getOffset() + (aBatched ? batch * aSliceSize : 0);
-                int bOff = b.getOffset() + (bBatched ? batch * bSliceSize : 0);
-                k.matmul(a.getStorage(), aOff, m, kDim,
-                        b.getStorage(), bOff, n,
-                        out, batch * cSliceSize);
+        int aSliceSize = m * kDim;
+        int bSliceSize = kDim * n;
+        int cSliceSize = m * n;
+
+        // Per-batch-axis stride into the source; 0 for axes that are broadcast (size 1).
+        int[] aStrides = sliceStridesFor(aBatchPadded, aSliceSize);
+        int[] bStrides = sliceStridesFor(bBatchPadded, bSliceSize);
+
+        int totalBatches = 1;
+        for (int dim : outBatch) totalBatches *= dim;
+
+        int[] indices = new int[batchNdim];
+        int cOff = 0;
+        for (int batch = 0; batch < totalBatches; batch++) {
+            int aOff = a.getOffset();
+            int bOff = b.getOffset();
+            for (int d = 0; d < batchNdim; d++) {
+                aOff += indices[d] * aStrides[d];
+                bOff += indices[d] * bStrides[d];
+            }
+            k.matmul(a.getStorage(), aOff, m, kDim,
+                    b.getStorage(), bOff, n,
+                    out, cOff);
+            cOff += cSliceSize;
+
+            // increment multi-dim batch index, rightmost first
+            for (int d = batchNdim - 1; d >= 0; d--) {
+                if (++indices[d] < outBatch[d]) break;
+                indices[d] = 0;
             }
         }
+
         return out;
+    }
+
+    private static int[] padLeftWithOnes(int[] batch, int targetLen) {
+        if (batch.length == targetLen) return batch;
+        int[] result = new int[targetLen];
+        Arrays.fill(result, 0, targetLen - batch.length, 1);
+        System.arraycopy(batch, 0, result, targetLen - batch.length, batch.length);
+        return result;
+    }
+
+    private static int[] sliceStridesFor(int[] paddedBatch, int sliceSize) {
+        int n = paddedBatch.length;
+        int[] strides = new int[n];
+        int s = sliceSize;
+        for (int d = n - 1; d >= 0; d--) {
+            if (paddedBatch[d] == 1) {
+                strides[d] = 0;
+            } else {
+                strides[d] = s;
+                s *= paddedBatch[d];
+            }
+        }
+        return strides;
     }
 
     public static float sum(Tensor a) {
