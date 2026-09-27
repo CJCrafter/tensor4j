@@ -3,11 +3,19 @@ package com.cjcrafter.tensor4j.nn.layers;
 import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.TensorBuilder;
 
+/**
+ * A lookup table that maps integer indices to learnable dense vectors, e.g. for word
+ * embeddings. Input elements are truncated to {@code int} indices into the weight table.
+ */
 public class Embedding extends Module {
 
     private final Tensor weight;
     private final int embeddingDim;
 
+    /**
+     * Creates an embedding table with {@code numEmbeddings} rows of {@code embeddingDim}
+     * randomly initialized values each.
+     */
     public Embedding(int numEmbeddings, int embeddingDim) {
         this.embeddingDim = embeddingDim;
         this.weight = TensorBuilder.builder()

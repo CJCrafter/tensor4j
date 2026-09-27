@@ -4,11 +4,19 @@ import com.cjcrafter.tensor4j.Shape;
 import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.TensorBuilder;
 
+/**
+ * Backward for {@link Tensor#cat(int, Tensor...)}: splits the upstream gradient back into
+ * one slice per concatenated input, along the same dimension.
+ */
 public class CatFn extends TensorFunction {
 
     private final int dim;
     private final int[] sizesAlongDim;
 
+    /**
+     * Records the backward function for concatenating {@code inputs} along {@code dim},
+     * where {@code sizesAlongDim[i]} is the size of {@code inputs[i]} along that dimension.
+     */
     public CatFn(int dim, int[] sizesAlongDim, Tensor... inputs) {
         super(inputs);
         this.dim = dim;

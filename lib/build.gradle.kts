@@ -30,6 +30,10 @@ tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.addAll(listOf("--add-modules", "jdk.incubator.vector"))
 }
 
+tasks.named<Javadoc>("javadoc") {
+    (options as CoreJavadocOptions).addStringOption("-add-modules", "jdk.incubator.vector")
+}
+
 tasks.named<Test>("test") {
     useJUnitPlatform()
     maxHeapSize = "2g"

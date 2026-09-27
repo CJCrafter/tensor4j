@@ -5,7 +5,8 @@ import com.cjcrafter.tensor4j.Tensor4j;
 
 /**
  * During training, randomly zeroes some of the elements of the input tensor
- * with probability {@code p}. The zeroed elements are chosen independently for
+ * with probability {@code p}, and rescales the survivors by {@code 1 / (1 - p)}
+ * to preserve the expected value. The zeroed elements are chosen independently for
  * each forward call, and are sampled from a Bernoulli distribution.
  *
  * <p>During testing/validation, you should always disable dropout. This can be
@@ -19,6 +20,9 @@ public class Dropout extends Module {
     private final float p;
     private boolean isTrain;
 
+    /**
+     * Creates a dropout layer where each element is zeroed with probability {@code p}.
+     */
     public Dropout(float p) {
         this.p = p;
         this.isTrain = true;
@@ -31,9 +35,10 @@ public class Dropout extends Module {
             if (p >= 1f)
                 return input.mul(0f);
 
+            // mask fires (element is kept) with probability (1 - p)
             Tensor bernoulli = Tensor4j.builder()
                     .like(input)
-                    .bernoulli(p);
+                    .bernoulli(1f - p);
             return input.mul(bernoulli.mul_(1f / (1f - p)));
         } else {
             // identity function in eval mode

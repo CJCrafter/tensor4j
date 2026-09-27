@@ -14,6 +14,10 @@ import static jdk.incubator.vector.VectorOperators.DIV;
  */
 public class DivFn extends TensorFunction {
 
+    /**
+     * Computes {@code a / b} elementwise (broadcasting shapes as needed) and records the
+     * backward function.
+     */
     public static Tensor apply(Tensor a, Tensor b) {
         return applyBinary(DIV, DivFn::new, a, b);
     }

@@ -26,14 +26,26 @@ public abstract class Module {
      */
     public abstract Tensor forward(Tensor input);
 
+    /**
+     * Switches this module (and its children) to evaluation mode. Equivalent to {@code train(false)}.
+     */
     public final void eval() {
         train(false);
     }
 
+    /**
+     * Switches this module (and its children) to training mode. Equivalent to {@code train(true)}.
+     */
     public final void train() {
         train(true);
     }
 
+    /**
+     * Sets whether this module is in training mode. Layers whose forward pass depends on the
+     * mode (e.g. {@link Dropout}) should override this; the default does nothing.
+     *
+     * @param mode {@code true} for training mode, {@code false} for evaluation mode.
+     */
     public void train(boolean mode) {
         // by default, this method should not be implemented by a subclass.
         // Some modules, like Dropout, need to behave differently depending
@@ -137,10 +149,18 @@ public abstract class Module {
         }
     }
 
+    /**
+     * Loads this module's parameters from a {@code .npz} file previously written by {@link #save(Path)}.
+     *
+     * @throws IllegalArgumentException if a required key is missing or shapes don't match.
+     */
     public void load(Path path) throws IOException {
         loadStateDict(NpzFormat.load(path));
     }
 
+    /**
+     * Saves this module's {@link #stateDict()} to a {@code .npz} file.
+     */
     public void save(Path path) throws IOException {
         NpzFormat.save(path, stateDict());
     }

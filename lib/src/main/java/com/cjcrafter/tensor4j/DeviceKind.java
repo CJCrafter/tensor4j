@@ -5,11 +5,8 @@ package com.cjcrafter.tensor4j;
  */
 public enum DeviceKind {
 
-    CPU,
-    CUDA,
-    OPENCL;
-
-    public boolean isCpu() {
-        return this == CPU;
-    }
+    /**
+     * Heap-allocated arrays managed by the device CPU.
+     */
+    CPU
 }

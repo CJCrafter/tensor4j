@@ -12,6 +12,9 @@ import com.cjcrafter.tensor4j.TensorBuilder;
  */
 public class MeanFn extends TensorFunction {
 
+    /**
+     * Records the backward function for {@code input.mean()}.
+     */
     public MeanFn(Tensor input) {
         super(input);
     }

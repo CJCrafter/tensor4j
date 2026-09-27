@@ -14,6 +14,10 @@ import static jdk.incubator.vector.VectorOperators.MUL;
  */
 public class MulFn extends TensorFunction {
 
+    /**
+     * Computes {@code a * b} elementwise (broadcasting shapes as needed) and records the
+     * backward function.
+     */
     public static Tensor apply(Tensor a, Tensor b) {
         return applyBinary(MUL, MulFn::new, a, b);
     }

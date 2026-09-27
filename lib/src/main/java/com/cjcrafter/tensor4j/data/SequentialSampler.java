@@ -1,10 +1,16 @@
 package com.cjcrafter.tensor4j.data;
 
+/**
+ * Samples indices {@code 0, 1, 2, ...} in order, without shuffling.
+ */
 public class SequentialSampler implements Sampler {
 
     private final int size;
     private int cursor;
 
+    /**
+     * Creates a sampler over {@code size} total samples.
+     */
     public SequentialSampler(int size) {
         this.size = size;
         this.cursor = 0;

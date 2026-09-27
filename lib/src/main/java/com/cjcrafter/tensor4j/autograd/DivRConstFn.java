@@ -13,6 +13,9 @@ import static jdk.incubator.vector.VectorOperators.DIV;
  */
 public class DivRConstFn extends TensorFunction {
 
+    /**
+     * Computes {@code a / b} and records the backward function.
+     */
     public static Tensor apply(float a, Tensor b) {
         return applyRBinaryConst(DIV, t -> new DivRConstFn(a, t), a, b);
     }

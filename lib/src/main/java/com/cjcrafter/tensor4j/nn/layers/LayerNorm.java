@@ -3,6 +3,11 @@ package com.cjcrafter.tensor4j.nn.layers;
 import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.TensorBuilder;
 
+/**
+ * Normalizes the last dimension of the input to zero mean and unit variance, then applies
+ * a learnable elementwise scale ({@code weight}, initialized to 1) and shift ({@code bias},
+ * initialized to 0).
+ */
 public class LayerNorm extends Module {
 
     private final Tensor weight;
@@ -10,10 +15,20 @@ public class LayerNorm extends Module {
     private final int featureSize;
     private final float eps;
 
+    /**
+     * Creates a layer norm over a last dimension of size {@code featureSize}, using a
+     * default epsilon of {@code 1e-5} for numerical stability.
+     */
     public LayerNorm(int featureSize) {
         this(featureSize, 1e-5f);
     }
 
+    /**
+     * Creates a layer norm over a last dimension of size {@code featureSize}.
+     *
+     * @param featureSize The expected size of the input's last dimension.
+     * @param eps         Added to the variance before taking the square root, to avoid division by zero.
+     */
     public LayerNorm(int featureSize, float eps) {
         this.featureSize = featureSize;
         this.eps = eps;

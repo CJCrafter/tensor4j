@@ -15,6 +15,9 @@ import static jdk.incubator.vector.VectorOperators.MIN;
  */
 public class MinConstFn extends TensorFunction {
 
+    /**
+     * Computes {@code min(a, b)} and records the backward function.
+     */
     public static Tensor apply(Tensor a, float b) {
         return applyBinaryConst(MIN, t -> new MinConstFn(t, b), a, b);
     }

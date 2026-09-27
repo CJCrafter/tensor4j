@@ -13,6 +13,9 @@ import static jdk.incubator.vector.VectorOperators.EXP;
  */
 public class ExpFn extends TensorFunction {
 
+    /**
+     * Computes {@code exp(a)} elementwise and records the backward function.
+     */
     public static Tensor apply(Tensor a) {
         return applyUnaryCached(EXP, ExpFn::new, a);
     }

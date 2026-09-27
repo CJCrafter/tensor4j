@@ -28,6 +28,9 @@ public abstract class TensorFunction {
         this.inputs = inputs;
     }
 
+    /**
+     * Returns the tensors this function was applied to, in argument order.
+     */
     public Tensor[] getInputs() {
         return inputs;
     }

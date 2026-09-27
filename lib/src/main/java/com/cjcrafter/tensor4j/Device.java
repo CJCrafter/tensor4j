@@ -18,18 +18,23 @@ public final class Device {
         this.ordinal = ordinal;
     }
 
-    public static Device cpu() {
-        return CPU;
-    }
-
+    /**
+     * Returns the {@link DeviceKind} family this device belongs to.
+     */
     public DeviceKind kind() {
         return kind;
     }
 
+    /**
+     * Returns the index of this device within its {@link DeviceKind} (e.g. GPU 0 vs GPU 1).
+     */
     public int ordinal() {
         return ordinal;
     }
 
+    /**
+     * Returns {@code true} if this device is the CPU.
+     */
     public boolean isCpu() {
         return kind == DeviceKind.CPU;
     }
@@ -49,5 +54,12 @@ public final class Device {
     @Override
     public String toString() {
         return kind == DeviceKind.CPU ? "cpu" : kind.name().toLowerCase() + ":" + ordinal;
+    }
+
+    /**
+     * Returns the singleton CPU device.
+     */
+    public static Device cpu() {
+        return CPU;
     }
 }

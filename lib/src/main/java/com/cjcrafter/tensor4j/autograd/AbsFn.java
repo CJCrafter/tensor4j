@@ -13,6 +13,9 @@ import static jdk.incubator.vector.VectorOperators.ABS;
  */
 public class AbsFn extends TensorFunction {
 
+    /**
+     * Computes {@code abs(a)} elementwise and records the backward function.
+     */
     public static Tensor apply(Tensor a) {
         return applyUnary(ABS, AbsFn::new, a);
     }

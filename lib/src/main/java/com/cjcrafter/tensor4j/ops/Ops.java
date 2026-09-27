@@ -128,14 +128,23 @@ public final class Ops {
         return strides;
     }
 
+    /**
+     * Returns the sum of all elements in {@code a}.
+     */
     public static float sum(Tensor a) {
         return f32(a).sum(a.getStorage(), a.getOffset(), a.getShape().numel());
     }
 
+    /**
+     * Returns the mean of all elements in {@code a}.
+     */
     public static float mean(Tensor a) {
         return f32(a).mean(a.getStorage(), a.getOffset(), a.getShape().numel());
     }
 
+    /**
+     * Sums {@code a} along {@code dim}, returning a new {@link Storage} with that dim collapsed to size 1.
+     */
     public static Storage sumDim(Tensor a, int dim) {
         if (!a.isContiguous()) a = a.contiguous();
         int[] dims = a.getShape().dims();
@@ -145,6 +154,10 @@ public final class Ops {
         return out;
     }
 
+    /**
+     * Reduces {@code a} to its maximum along {@code dim}, returning a new {@link Storage}
+     * with that dim collapsed to size 1.
+     */
     public static Storage maxDim(Tensor a, int dim) {
         if (!a.isContiguous()) a = a.contiguous();
         int[] dims = a.getShape().dims();
@@ -154,6 +167,10 @@ public final class Ops {
         return out;
     }
 
+    /**
+     * Reduces {@code a} to the index of its maximum along {@code dim}, returning a new
+     * {@link Storage} with that dim collapsed to size 1.
+     */
     public static Storage argmaxDim(Tensor a, int dim) {
         if (!a.isContiguous()) a = a.contiguous();
         int[] dims = a.getShape().dims();
@@ -163,22 +180,36 @@ public final class Ops {
         return out;
     }
 
+    /**
+     * Applies a unary op elementwise to {@code a}, allocating a new result {@link Storage}.
+     */
     public static Storage unaryOp(VectorOperators.Unary op, Tensor a) {
         Storage out = alloc(a, a.getShape().numel());
         unaryOp(op, a, out);
         return out;
     }
 
+    /**
+     * Applies a unary op elementwise to {@code a}, writing into the given {@code out} storage.
+     */
     public static void unaryOp(VectorOperators.Unary op, Tensor a, Storage out) {
         f32(a).unary(op, a.getStorage(), a.getOffset(), out, 0, a.getShape().numel());
     }
 
+    /**
+     * Applies a binary op elementwise between {@code a} and {@code b}, allocating a new
+     * result {@link Storage} shaped {@code resultShape}.
+     */
     public static Storage binaryOp(VectorOperators.Binary op, Tensor a, Tensor b, Shape resultShape) {
         Storage out = alloc(a, resultShape.numel());
         binaryOp(op, a, b, resultShape, out);
         return out;
     }
 
+    /**
+     * Applies a binary op elementwise between {@code a} and {@code b} (broadcasting to
+     * {@code resultShape} if needed), writing into the given {@code out} storage.
+     */
     public static void binaryOp(VectorOperators.Binary op, Tensor a, Tensor b, Shape resultShape, Storage out) {
         Shape aShape = a.getShape();
         Shape bShape = b.getShape();
@@ -198,32 +229,56 @@ public final class Ops {
         }
     }
 
+    /**
+     * Applies a binary op elementwise between {@code a} and the constant {@code b},
+     * allocating a new result {@link Storage}.
+     */
     public static Storage binaryOpConst(VectorOperators.Binary op, Tensor a, float b) {
         Storage out = alloc(a, a.getShape().numel());
         binaryOpConst(op, a, b, out);
         return out;
     }
 
+    /**
+     * Applies a binary op elementwise between {@code a} and the constant {@code b}, writing
+     * into the given {@code out} storage.
+     */
     public static void binaryOpConst(VectorOperators.Binary op, Tensor a, float b, Storage out) {
         f32(a).binaryConst(op, a.getStorage(), a.getOffset(), b, out, 0, a.getShape().numel());
     }
 
+    /**
+     * Applies a binary op elementwise between the constant {@code a} and {@code b} (reversed
+     * operand order), allocating a new result {@link Storage}.
+     */
     public static Storage rbinaryOpConst(VectorOperators.Binary op, float a, Tensor b) {
         Storage out = alloc(b, b.getShape().numel());
         rbinaryOpConst(op, a, b, out);
         return out;
     }
 
+    /**
+     * Applies a binary op elementwise between the constant {@code a} and {@code b} (reversed
+     * operand order), writing into the given {@code out} storage.
+     */
     public static void rbinaryOpConst(VectorOperators.Binary op, float a, Tensor b, Storage out) {
         f32(b).rbinaryConst(op, a, b.getStorage(), b.getOffset(), out, 0, b.getShape().numel());
     }
 
+    /**
+     * Applies a comparison elementwise between {@code a} and {@code b}, allocating a new
+     * result {@link Storage} of 1.0/0.0 values shaped {@code resultShape}.
+     */
     public static Storage comparisonOp(VectorOperators.Comparison op, Tensor a, Tensor b, Shape resultShape) {
         Storage out = alloc(a, resultShape.numel());
         comparisonOp(op, a, b, resultShape, out);
         return out;
     }
 
+    /**
+     * Applies a comparison elementwise between {@code a} and {@code b} (broadcasting to
+     * {@code resultShape} if needed), writing 1.0/0.0 values into the given {@code out} storage.
+     */
     public static void comparisonOp(VectorOperators.Comparison op, Tensor a, Tensor b, Shape resultShape, Storage out) {
         Shape aShape = a.getShape();
         Shape bShape = b.getShape();
@@ -243,16 +298,29 @@ public final class Ops {
         }
     }
 
+    /**
+     * Applies a comparison elementwise between {@code a} and the constant {@code b},
+     * allocating a new result {@link Storage} of 1.0/0.0 values.
+     */
     public static Storage comparisonOpConst(VectorOperators.Comparison op, Tensor a, float b) {
         Storage out = alloc(a, a.getShape().numel());
         comparisonOpConst(op, a, b, out);
         return out;
     }
 
+    /**
+     * Applies a comparison elementwise between {@code a} and the constant {@code b}, writing
+     * 1.0/0.0 values into the given {@code out} storage.
+     */
     public static void comparisonOpConst(VectorOperators.Comparison op, Tensor a, float b, Storage out) {
         f32(a).compareConst(op, a.getStorage(), a.getOffset(), b, out, 0, a.getShape().numel());
     }
 
+    /**
+     * Applies a ternary op elementwise across {@code a}, {@code b}, and {@code c}, allocating
+     * a new result {@link Storage}. All three inputs must share {@code resultShape} and be
+     * contiguous; broadcasting is not yet supported here.
+     */
     public static Storage ternaryOp(VectorOperators.Ternary op, Tensor a, Tensor b, Tensor c, Shape resultShape) {
         Storage out = alloc(a, resultShape.numel());
         Shape aShape = a.getShape();

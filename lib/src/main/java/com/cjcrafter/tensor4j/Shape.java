@@ -15,10 +15,21 @@ public final class Shape {
     private final int[] dims;
     private final int[] strides;
 
+    /**
+     * Creates a contiguous, row-major shape with the given dimensions.
+     *
+     * @param dims The size of each dimension; must have at least 2 entries.
+     */
     public Shape(int... dims) {
         this(dims, contiguousStridesFrom(dims));
     }
 
+    /**
+     * Creates a shape with explicit (possibly non-contiguous) strides, e.g. for a view.
+     *
+     * @param dims The size of each dimension; must have at least 2 entries.
+     * @param strides The stride of each dimension; must be the same length as {@code dims}.
+     */
     public Shape(int[] dims, int[] strides) {
         if (dims.length < 2) throw new IllegalArgumentException("tensors must be at least 2D, got " + dims.length + "D");
         if (dims.length != strides.length) throw new IllegalArgumentException("dims.length must equal strides.length");
@@ -46,10 +57,10 @@ public final class Shape {
     }
 
     /**
-     * Returns the number of dimensions in by this shape.
+     * Returns the number of dimensions in this shape.
      *
-     * <p>For a vector, this will return <code>1</code>. For a matrix, this
-     * will return <code>2</code>.
+     * <p>Tensors are always at least 2D, so for a matrix this returns
+     * <code>2</code>, and for a batch of matrices it returns <code>3</code>, etc.
      *
      * @return The number of dimensions in this tensor.
      */
@@ -191,7 +202,7 @@ public final class Shape {
      * <pre>
      *   (3,4) + (1,4)   -> (3,4)   row-vector broadcast
      *   (3,4) + (3,1)   -> (3,4)   col-vector broadcast
-     *   (3,4) + (1)     -> (3,4)   scalar broadcast
+     *   (3,4) + (1,1)   -> (3,4)   scalar broadcast
      *   (3,4) + (2,3,4) -> (2,3,4) batch dimension added
      *   (3,4) + (2,4)   -> null    incompatible
      * </pre>

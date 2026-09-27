@@ -17,6 +17,9 @@ public final class CpuF32Kernels implements F32KernelTable {
 
     private static final CpuF32Kernels INSTANCE = new CpuF32Kernels();
 
+    /**
+     * Returns the shared singleton instance.
+     */
     public static CpuF32Kernels instance() {
         return INSTANCE;
     }

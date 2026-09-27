@@ -13,6 +13,10 @@ import static jdk.incubator.vector.VectorOperators.MAX;
  */
 public class MaxFn extends TensorFunction {
 
+    /**
+     * Computes the elementwise maximum of {@code a} and {@code b} (broadcasting shapes as
+     * needed) and records the backward function.
+     */
     public static Tensor apply(Tensor a, Tensor b) {
         return applyBinary(MAX, MaxFn::new, a, b);
     }

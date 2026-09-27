@@ -10,6 +10,9 @@ import com.cjcrafter.tensor4j.Tensor;
  */
 public record MSELoss(Reduction reduction) implements Loss {
 
+    /**
+     * Creates an MSE loss with {@link Loss.Reduction#MEAN} reduction.
+     */
     public MSELoss() {
         this(Reduction.MEAN);
     }

@@ -14,6 +14,9 @@ import static jdk.incubator.vector.VectorOperators.SUB;
  */
 public class SubFn extends TensorFunction {
 
+    /**
+     * Computes {@code a - b} (broadcasting shapes as needed) and records the backward function.
+     */
     public static Tensor apply(Tensor a, Tensor b) {
         return applyBinary(SUB, SubFn::new, a, b);
     }

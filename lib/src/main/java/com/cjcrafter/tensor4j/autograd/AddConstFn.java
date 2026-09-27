@@ -14,10 +14,16 @@ import static jdk.incubator.vector.VectorOperators.SUB;
  */
 public class AddConstFn extends TensorFunction {
 
+    /**
+     * Computes {@code a + b} and records the backward function.
+     */
     public static Tensor applyAdd(Tensor a, float b) {
         return applyBinaryConst(ADD, t -> new AddConstFn(t, b), a, b);
     }
 
+    /**
+     * Computes {@code a - b} and records the backward function.
+     */
     public static Tensor applySub(Tensor a, float b) {
         return applyBinaryConst(SUB, t -> new AddConstFn(t, b), a, b);
     }

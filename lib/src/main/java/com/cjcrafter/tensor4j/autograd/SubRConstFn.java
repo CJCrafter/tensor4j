@@ -13,6 +13,9 @@ import static jdk.incubator.vector.VectorOperators.SUB;
  */
 public class SubRConstFn extends TensorFunction {
 
+    /**
+     * Computes {@code a - b} and records the backward function.
+     */
     public static Tensor apply(float a, Tensor b) {
         return applyRBinaryConst(SUB, t -> new SubRConstFn(a, t), a, b);
     }

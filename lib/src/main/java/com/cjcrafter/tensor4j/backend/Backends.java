@@ -5,8 +5,7 @@ import com.cjcrafter.tensor4j.backend.cpu.CpuBackend;
 import com.google.common.base.Preconditions;
 
 /**
- * Registry that resolves a {@link Backend} for a given {@link Device}. Today
- * only CPU is implemented; CUDA / OpenCL plug in here later.
+ * Registry that resolves a {@link Backend} for a given {@link Device}.
  */
 public final class Backends {
 

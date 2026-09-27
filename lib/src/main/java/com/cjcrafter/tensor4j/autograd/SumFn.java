@@ -12,6 +12,9 @@ import com.cjcrafter.tensor4j.TensorBuilder;
  */
 public class SumFn extends TensorFunction {
 
+    /**
+     * Records the backward function for {@code input.sum()}.
+     */
     public SumFn(Tensor input) {
         super(input);
     }

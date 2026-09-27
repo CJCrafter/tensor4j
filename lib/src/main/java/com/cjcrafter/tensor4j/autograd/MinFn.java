@@ -17,6 +17,10 @@ import static jdk.incubator.vector.VectorOperators.MIN;
  */
 public class MinFn extends TensorFunction {
 
+    /**
+     * Computes the elementwise minimum of {@code a} and {@code b} (broadcasting shapes as
+     * needed) and records the backward function.
+     */
     public static Tensor apply(Tensor a, Tensor b) {
         return applyBinary(MIN, MinFn::new, a, b);
     }

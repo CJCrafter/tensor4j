@@ -10,10 +10,17 @@ public final class HeapAllocator implements Allocator {
 
     private static final HeapAllocator INSTANCE = new HeapAllocator();
 
+    /**
+     * Returns the shared singleton instance.
+     */
     public static HeapAllocator instance() {
         return INSTANCE;
     }
 
+    /**
+     * Creates a new allocator instance; since heap allocation has no shared pool or state,
+     * this behaves identically to {@link #instance()}.
+     */
     public HeapAllocator() {
     }
 

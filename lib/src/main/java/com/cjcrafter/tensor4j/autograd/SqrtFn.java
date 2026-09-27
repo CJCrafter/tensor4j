@@ -13,6 +13,9 @@ import static jdk.incubator.vector.VectorOperators.SQRT;
  */
 public class SqrtFn extends TensorFunction {
 
+    /**
+     * Computes {@code sqrt(a)} elementwise and records the backward function.
+     */
     public static Tensor apply(Tensor a) {
         return applyUnaryCached(SQRT, SqrtFn::new, a);
     }

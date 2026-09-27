@@ -13,6 +13,9 @@ public final class CpuBackend implements Backend {
 
     private static final CpuBackend INSTANCE = new CpuBackend();
 
+    /**
+     * Returns the shared singleton instance.
+     */
     public static CpuBackend instance() {
         return INSTANCE;
     }

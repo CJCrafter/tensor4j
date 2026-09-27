@@ -12,6 +12,9 @@ public class IndexSelectFn extends TensorFunction {
     private final int dim;
     private final int[] indices;
 
+    /**
+     * Records the backward function for {@code input.indexSelect(dim, indices)}.
+     */
     public IndexSelectFn(Tensor input, int dim, int[] indices) {
         super(input);
         this.dim = dim;

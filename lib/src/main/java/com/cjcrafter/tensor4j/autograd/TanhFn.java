@@ -13,6 +13,9 @@ import static jdk.incubator.vector.VectorOperators.TANH;
  */
 public class TanhFn extends TensorFunction {
 
+    /**
+     * Computes {@code tanh(a)} elementwise and records the backward function.
+     */
     public static Tensor apply(Tensor a) {
         return applyUnaryCached(TANH, TanhFn::new, a);
     }

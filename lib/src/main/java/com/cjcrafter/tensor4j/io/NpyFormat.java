@@ -12,9 +12,11 @@ import java.util.regex.Pattern;
 /**
  * Low-level reader/writer for the NumPy {@code .npy} binary format.
  *
- * <p>Supports float32 arrays only. Handles both little-endian ({@code <f4})
- * and big-endian ({@code >f4}) data, and automatically reshapes 1D arrays
- * to 2D since tensor4j requires minimum 2D tensors.
+ * <p>{@link #read(InputStream)} always produces a float32 {@link Tensor}, casting from
+ * whichever of {@code f4, f8, i1, u1, i2, i4, i8, b1} the file was stored as, in either
+ * little- or big-endian byte order. {@link #write(OutputStream, Tensor)} always writes
+ * little-endian float32. 1D arrays are automatically reshaped to 2D column vectors since
+ * tensor4j requires a minimum of 2 dimensions.
  *
  * @see <a href="https://numpy.org/doc/stable/reference/generated/numpy.lib.format.html">NumPy format spec</a>
  */

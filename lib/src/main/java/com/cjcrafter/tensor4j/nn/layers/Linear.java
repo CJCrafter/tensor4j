@@ -16,10 +16,24 @@ public class Linear extends Module {
     private final Tensor weight; // (out, in)
     private final Tensor bias;   // (1, out)
 
+    /**
+     * Creates a layer mapping {@code inFeatures} inputs to {@code outFeatures} outputs,
+     * with a bias, using the default random generator.
+     */
     public Linear(int inFeatures, int outFeatures) {
         this(Tensor4j.getRandom(), inFeatures, outFeatures, (float) (1.0 / Math.sqrt(inFeatures)), true);
     }
 
+    /**
+     * Creates a layer mapping {@code inFeatures} inputs to {@code outFeatures} outputs,
+     * with weights/bias uniformly initialized in {@code [-k, k)}.
+     *
+     * @param rng          The random generator to sample initial weights/bias from.
+     * @param inFeatures   The size of the input's last dimension.
+     * @param outFeatures  The size of the output's last dimension.
+     * @param k            The half-width of the uniform initialization range.
+     * @param includeBias  If {@code false}, this layer has no bias term.
+     */
     public Linear(RandomGenerator rng, int inFeatures, int outFeatures, float k, boolean includeBias) {
         this.weight = TensorBuilder.builder()
                 .shape(inFeatures, outFeatures) // these are "swapped" for implicit transpose...

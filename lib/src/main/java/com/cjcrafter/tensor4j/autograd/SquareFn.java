@@ -15,6 +15,9 @@ import static jdk.incubator.vector.VectorOperators.MUL;
  */
 public class SquareFn extends TensorFunction {
 
+    /**
+     * Computes {@code a^2} elementwise and records the backward function.
+     */
     public static Tensor apply(Tensor a) {
         Storage out = Ops.binaryOp(MUL, a, a, a.getShape());
         return Tensor.wrapResult(out, a.getShape(), new SquareFn(a));

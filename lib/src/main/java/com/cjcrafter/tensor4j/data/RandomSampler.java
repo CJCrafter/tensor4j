@@ -3,8 +3,8 @@ package com.cjcrafter.tensor4j.data;
 import com.cjcrafter.tensor4j.Tensor4j;
 
 /**
- * Uniformly and random samples all samples from a fixed-size dataset exactly 1
- * time per epoch.
+ * Uniformly and randomly samples every sample from a fixed-size dataset
+ * exactly once per epoch (shuffled order).
  */
 public class RandomSampler implements Sampler {
 

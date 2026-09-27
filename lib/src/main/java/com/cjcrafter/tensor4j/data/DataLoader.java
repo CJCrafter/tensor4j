@@ -5,6 +5,17 @@ import com.cjcrafter.tensor4j.Tensor;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
+/**
+ * Iterates a {@link Dataset} in batches, using a {@link Sampler} to pick each batch's indices.
+ * Each iteration yields one {@code Tensor[]} per {@link Dataset#tensors()} entry, sliced to
+ * the current batch. Resets the sampler (reshuffling, if applicable) at the start of each
+ * new {@link #iterator()}.
+ *
+ * @param dataset   The dataset to iterate.
+ * @param batchSize The number of samples per batch.
+ * @param sampler   Determines the order (and, for random samplers, the shuffle) of samples.
+ * @param dropLast  If {@code true}, a final undersized batch is dropped instead of yielded.
+ */
 public record DataLoader(
         Dataset dataset,
         int batchSize,
@@ -12,10 +23,16 @@ public record DataLoader(
         boolean dropLast
 ) implements Iterable<Tensor[]> {
 
+    /**
+     * Creates a loader that keeps the final undersized batch of each epoch.
+     */
     public DataLoader(Dataset dataset, int batchSize, Sampler sampler) {
         this(dataset, batchSize, sampler, false);
     }
 
+    /**
+     * Resets the sampler and returns an iterator over one epoch's worth of batches.
+     */
     @Override
     public Iterator<Tensor[]> iterator() {
         sampler.reset();

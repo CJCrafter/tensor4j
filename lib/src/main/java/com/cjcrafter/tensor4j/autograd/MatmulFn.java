@@ -9,15 +9,20 @@ import com.google.common.base.Preconditions;
 import java.util.Arrays;
 
 /**
- * Backward for {@code C = A @ B}.
+ * Backward for {@code C = A @ B}, including N-D batched broadcasting (the batch dims of
+ * {@code A} and {@code B} may differ and are broadcast against each other, PyTorch-style).
  *
  * <pre>{@code
- * dL/dA = gradOutput @ B^T
- * dL/dB = A^T @ gradOutput
+ * dL/dA = gradOutput @ B^T   (summed back down over any broadcast batch dims)
+ * dL/dB = A^T @ gradOutput   (summed back down over any broadcast batch dims)
  * }</pre>
  */
 public class MatmulFn extends TensorFunction {
 
+    /**
+     * Matrix-multiplies {@code a} and {@code b} (see {@link com.cjcrafter.tensor4j.ops.Ops#matmul}
+     * for the batching/broadcasting rules) and records the backward function.
+     */
     public static Tensor apply(Tensor a, Tensor b) {
         int aDim = a.getShape().dimensions();
         int bDim = b.getShape().dimensions();
@@ -61,6 +66,9 @@ public class MatmulFn extends TensorFunction {
         return result;
     }
 
+    /**
+     * Records the backward function for {@code a.matmul(b)}.
+     */
     public MatmulFn(Tensor a, Tensor b) {
         super(a, b);
     }

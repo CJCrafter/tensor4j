@@ -13,6 +13,9 @@ import static jdk.incubator.vector.VectorOperators.LOG;
  */
 public class LogFn extends TensorFunction {
 
+    /**
+     * Computes {@code log(a)} elementwise and records the backward function.
+     */
     public static Tensor apply(Tensor a) {
         return applyUnary(LOG, LogFn::new, a);
     }

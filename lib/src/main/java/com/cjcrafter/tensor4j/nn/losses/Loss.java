@@ -51,24 +51,23 @@ public interface Loss {
      */
     enum Reduction {
         /**
-         * No reduction... e.g. return a vector of absolute differences.
+         * No reduction: returns the per-element loss tensor unchanged.
          */
         NONE,
 
         /**
-         * Mean of the absolute differences.
+         * Mean of the per-element loss values.
          */
         MEAN,
 
         /**
-         * Sum of the absolute differences.
+         * Sum of the per-element loss values.
          */
         SUM;
 
 
         /**
-         * Reduces the given {@code input} vector according to the reduction
-         * scheme.
+         * Reduces the given per-element loss tensor according to this reduction scheme.
          *
          * @param input The tensor to reduce.
          * @return The reduced tensor.

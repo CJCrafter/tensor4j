@@ -5,11 +5,17 @@ import com.cjcrafter.tensor4j.Tensor4j;
 
 import java.util.Collection;
 
+/**
+ * Plain stochastic gradient descent: {@code param -= lr * grad}.
+ */
 public class SGD implements Optimizer {
 
     private final Collection<Tensor> params;
     private final float lr;
 
+    /**
+     * Creates an SGD optimizer over {@code params} with learning rate {@code lr}.
+     */
     public SGD(Collection<Tensor> params, float lr) {
         this.params = params;
         this.lr = lr;

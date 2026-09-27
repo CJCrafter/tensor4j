@@ -9,6 +9,9 @@ import com.cjcrafter.tensor4j.Tensor;
  */
 public class TransposeFn extends TensorFunction {
 
+    /**
+     * Swaps the last two dimensions of {@code a} (sharing storage) and records the backward function.
+     */
     public static Tensor apply(Tensor a) {
         return Tensor.wrapResult(a.getStorage(), a.getShape().transpose(),
                 a.getOffset(), new TransposeFn(a));

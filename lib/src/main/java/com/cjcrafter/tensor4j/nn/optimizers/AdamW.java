@@ -26,10 +26,15 @@ import java.util.Map;
  */
 public class AdamW implements Optimizer {
 
+    /** Default learning rate. */
     public static final float DEFAULT_LR = 1e-3f;
+    /** Default exponential decay rate for the first moment (mean) estimate. */
     public static final float DEFAULT_BETA1 = 0.9f;
+    /** Default exponential decay rate for the second moment (variance) estimate. */
     public static final float DEFAULT_BETA2 = 0.999f;
+    /** Default decoupled weight decay coefficient (disabled by default). */
     public static final float DEFAULT_WEIGHT_DECAY = 0f;
+    /** Default epsilon added to the denominator for numerical stability. */
     public static final float DEFAULT_EPS = 1e-8f;
 
     private final Collection<Tensor> params;
@@ -44,10 +49,24 @@ public class AdamW implements Optimizer {
 
     private int t = 0;
 
+    /**
+     * Creates an AdamW optimizer over {@code params} with the default betas, weight decay,
+     * and epsilon.
+     */
     public AdamW(Collection<Tensor> params, float lr) {
         this(params, lr, DEFAULT_BETA1, DEFAULT_BETA2, DEFAULT_WEIGHT_DECAY, DEFAULT_EPS);
     }
 
+    /**
+     * Creates an AdamW optimizer over {@code params}.
+     *
+     * @param params      The parameters to optimize.
+     * @param lr          The learning rate.
+     * @param beta1       Exponential decay rate for the first moment (mean) estimate.
+     * @param beta2       Exponential decay rate for the second moment (variance) estimate.
+     * @param weightDecay The decoupled weight decay coefficient; {@code 0} disables it.
+     * @param eps         Added to the denominator for numerical stability.
+     */
     public AdamW(Collection<Tensor> params, float lr, float beta1, float beta2, float weightDecay, float eps) {
         this.params = params;
         this.lr = lr;

@@ -14,6 +14,9 @@ import static jdk.incubator.vector.VectorOperators.ADD;
  */
 public class AddFn extends TensorFunction {
 
+    /**
+     * Computes {@code a + b} (broadcasting shapes as needed) and records the backward function.
+     */
     public static Tensor apply(Tensor a, Tensor b) {
         return applyBinary(ADD, AddFn::new, a, b);
     }

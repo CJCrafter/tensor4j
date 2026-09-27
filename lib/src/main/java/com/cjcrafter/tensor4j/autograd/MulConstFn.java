@@ -13,6 +13,9 @@ import static jdk.incubator.vector.VectorOperators.MUL;
  */
 public class MulConstFn extends TensorFunction {
 
+    /**
+     * Computes {@code a * b} and records the backward function.
+     */
     public static Tensor apply(Tensor a, float b) {
         return applyBinaryConst(MUL, t -> new MulConstFn(t, b), a, b);
     }

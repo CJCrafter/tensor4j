@@ -10,6 +10,9 @@ import com.cjcrafter.tensor4j.Tensor;
  */
 public record L1Loss(Reduction reduction) implements Loss {
 
+    /**
+     * Creates an L1 loss with {@link Loss.Reduction#MEAN} reduction.
+     */
     public L1Loss() {
         this(Reduction.MEAN);
     }

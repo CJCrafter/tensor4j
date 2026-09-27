@@ -12,6 +12,9 @@ import com.google.common.base.Preconditions;
  */
 public class SumDimFn extends TensorFunction {
 
+    /**
+     * Sums {@code a} along {@code dim} (collapsed to size 1) and records the backward function.
+     */
     public static Tensor apply(Tensor a, int dim) {
         Preconditions.checkArgument(dim >= 0 && dim < a.getShape().dimensions(),
                 "dim %s out of range for %sD tensor", dim, a.getShape().dimensions());
