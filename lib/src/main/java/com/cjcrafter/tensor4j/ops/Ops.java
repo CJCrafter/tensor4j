@@ -6,7 +6,6 @@ import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.backend.Backend;
 import com.cjcrafter.tensor4j.backend.Backends;
 import com.cjcrafter.tensor4j.backend.F32KernelTable;
-import com.cjcrafter.tensor4j.memory.NativeStorage;
 import com.cjcrafter.tensor4j.memory.Storage;
 import com.google.common.base.Preconditions;
 import jdk.incubator.vector.VectorOperators;
@@ -30,7 +29,7 @@ public final class Ops {
         Backend backend = Backends.forDevice(t.device());
         Preconditions.checkArgument(backend.supports(t.dtype()),
                 "backend %s does not support dtype %s", backend.device(), t.dtype());
-        return NativeStorage.allocate(backend.allocator(), DType.F32, numel);
+        return backend.allocator().allocate(DType.F32, numel);
     }
 
     /**
@@ -53,9 +52,6 @@ public final class Ops {
         int n = bShape.dim(bDim - 1);
 
         Storage out = alloc(a, resultShape.numel());
-        // matmul accumulates into c; native blocks are not zero-initialized
-        out.segment().fill((byte) 0);
-
         F32KernelTable k = f32(a);
 
         // Fast path: plain 2D @ 2D, no batching.

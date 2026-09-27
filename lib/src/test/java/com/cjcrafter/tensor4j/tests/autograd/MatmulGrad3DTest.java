@@ -4,8 +4,6 @@ import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.Tensor4j;
 import com.cjcrafter.tensor4j.TensorBuilder;
 
-import java.lang.foreign.ValueLayout;
-
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -72,13 +70,11 @@ class MatmulGrad3DTest {
     }
 
     private static float read(Tensor t, int flatIdx) {
-        return t.getStorage().segment().get(ValueLayout.JAVA_FLOAT,
-                (long) (t.getOffset() + flatIdx) * Float.BYTES);
+        return t.getStorage().array()[t.getOffset() + flatIdx];
     }
 
     private static void write(Tensor t, int flatIdx, float val) {
-        t.getStorage().segment().set(ValueLayout.JAVA_FLOAT,
-                (long) (t.getOffset() + flatIdx) * Float.BYTES, val);
+        t.getStorage().array()[t.getOffset() + flatIdx] = val;
     }
 
     private static void checkGradByFiniteDiff(Tensor t, java.util.function.Supplier<Float> forward) {

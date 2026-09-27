@@ -1,30 +1,14 @@
 package com.cjcrafter.tensor4j.memory;
 
+import com.cjcrafter.tensor4j.DType;
+
 /**
- * Device-agnostic memory allocator. Backed by a slab pool on CPU, by
- * {@code cudaMalloc} on CUDA, etc.
+ * Device-agnostic storage allocator.
  */
 public interface Allocator {
 
     /**
-     * Allocates a block of at least {@code bytes}. The returned block must be
-     * freed by invoking {@link DataPtr#deleter()}.
+     * Allocates a {@link Storage} of {@code numElements} elements of {@code dtype}.
      */
-    DataPtr allocate(long bytes);
-
-    /**
-     * Returns any unused slabs / blocks back to the OS / driver. Useful in
-     * tests and on OOM.
-     */
-    void emptyCache();
-
-    /**
-     * Total bytes currently held by the allocator (live + cached).
-     */
-    long reservedBytes();
-
-    /**
-     * Total bytes currently handed out to live allocations.
-     */
-    long allocatedBytes();
+    Storage allocate(DType dtype, int numElements);
 }

@@ -3,16 +3,12 @@ package com.cjcrafter.tensor4j.memory;
 import com.cjcrafter.tensor4j.DType;
 import com.cjcrafter.tensor4j.Device;
 
-import java.lang.foreign.MemorySegment;
-import java.util.concurrent.atomic.AtomicLong;
-
 /**
- * A contiguous block of memory that stores the underlying
- * data of a tensor on some device. Identity-bearing and refcounted.
+ * A contiguous block of memory that stores the underlying data of a tensor
+ * on some device, backed by a plain heap array. Lifecycle is managed by the
+ * JVM garbage collector; no manual refcounting is needed.
  */
 public abstract class Storage {
-
-    private final AtomicLong refCount = new AtomicLong(0);
 
     public abstract DType dtype();
 
@@ -24,31 +20,8 @@ public abstract class Storage {
         return sizeBytes() / dtype().sizeBytes();
     }
 
-    public final long incRef() {
-        return refCount.incrementAndGet();
-    }
-
-    public final long decRef() {
-        long n = refCount.decrementAndGet();
-        if (n == 0)
-            delete();
-        else if (n < 0)
-            throw new IllegalStateException("decRef below zero on " + this);
-        return n;
-    }
-
-    public final long useCount() {
-        return refCount.get();
-    }
-
     /**
-     * Releases the underlying buffer. Invoked exactly once when the strong refcount hits zero.
+     * Returns the backing {@code float[]} for this storage.
      */
-    protected abstract void delete();
-
-    /**
-     * Returns a {@link MemorySegment} view over this storage. Heap-backed
-     * storage wraps its array; native storage returns the slab slice.
-     */
-    public abstract MemorySegment segment();
+    public abstract float[] array();
 }

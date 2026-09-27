@@ -1,20 +1,18 @@
 package com.cjcrafter.tensor4j;
 
 import com.cjcrafter.tensor4j.autograd.*;
-import com.cjcrafter.tensor4j.memory.NativeStorage;
+import com.cjcrafter.tensor4j.memory.HeapStorage;
 import com.cjcrafter.tensor4j.memory.Storage;
 import com.cjcrafter.tensor4j.ops.Ops;
 import com.google.common.base.Preconditions;
 import org.jetbrains.annotations.ApiStatus;
 
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.util.*;
 
 import static jdk.incubator.vector.VectorOperators.*;
 
 /**
- * A multi-dimensional float32 matrix backed by a refcounted {@link Storage}.
+ * A multi-dimensional float32 matrix backed by a heap-array {@link Storage}.
  *
  * <p>Most ops are out-of-place; {@link #transpose()}, {@link #view(int...)},
  * and {@link #detach()} share the underlying storage.
@@ -35,15 +33,10 @@ public class Tensor implements Cloneable {
         this.shape = shape;
         this.offset = offset;
         this.requiresGrad = requiresGrad;
-
-        // Increment the number of pointers to the storage, and decrement the
-        // pointer if it gets Garbage Collected
-        storage.incRef();
-        Tensor4j.onClean(this, storage::decRef);
     }
 
     private static Storage alloc(int numel) {
-        return NativeStorage.allocate(DType.F32, numel);
+        return HeapStorage.allocate(DType.F32, numel);
     }
 
     // ---- accessors ----
@@ -146,21 +139,19 @@ public class Tensor implements Cloneable {
         int outDimStride = catTotal * inner;
 
         Storage out = alloc(outShape.numel());
-        MemorySegment outSeg = out.segment();
+        float[] outArr = out.array();
 
         int cursor = 0;
         for (int k = 0; k < tensors.length; k++) {
             Tensor t = tensors[k].isContiguous() ? tensors[k] : tensors[k].contiguous();
             int sizeK = sizesAlongDim[k];
             int inDimStride = sizeK * inner;
-            MemorySegment tSeg = t.storage.segment();
+            float[] tArr = t.storage.array();
             int tOff = t.offset;
             for (int o = 0; o < outer; o++) {
                 int outBase = o * outDimStride + cursor * inner;
                 int inBase = tOff + o * inDimStride;
-                MemorySegment.copy(tSeg, (long) inBase * Float.BYTES,
-                        outSeg, (long) outBase * Float.BYTES,
-                        (long) sizeK * inner * Float.BYTES);
+                System.arraycopy(tArr, inBase, outArr, outBase, sizeK * inner);
             }
             cursor += sizeK;
         }
@@ -195,17 +186,16 @@ public class Tensor implements Cloneable {
         Tensor src = isContiguous() ? this : contiguous();
         int n = shape.numel();
         float[] out = new float[n];
-        MemorySegment.copy(src.storage.segment(), ValueLayout.JAVA_FLOAT,
-                (long) src.offset * Float.BYTES, out, 0, n);
+        System.arraycopy(src.storage.array(), src.offset, out, 0, n);
         return out;
     }
 
     private float read(int idx) {
-        return storage.segment().get(ValueLayout.JAVA_FLOAT, (long) idx * Float.BYTES);
+        return storage.array()[idx];
     }
 
     private void write(int idx, float val) {
-        storage.segment().set(ValueLayout.JAVA_FLOAT, (long) idx * Float.BYTES, val);
+        storage.array()[idx] = val;
     }
 
     public Shape getShape() {
@@ -252,7 +242,7 @@ public class Tensor implements Cloneable {
 
         // seed with dL/dL = 1
         Storage seedStorage = alloc(1);
-        seedStorage.segment().set(ValueLayout.JAVA_FLOAT, 0L, 1f);
+        seedStorage.array()[0] = 1f;
         meta().grad = new Tensor(seedStorage, new Shape(1, 1), 0, false);
 
         // build reverse-topological order of the forward graph so gradient is
@@ -331,13 +321,12 @@ public class Tensor implements Cloneable {
 
         int n = shape.numel();
         Storage dst = alloc(n);
-        MemorySegment dstSeg = dst.segment();
-        MemorySegment srcSeg = storage.segment();
+        float[] dstArr = dst.array();
+        float[] srcArr = storage.array();
         int[] indices = new int[shape.dimensions()];
 
         for (int flat = 0; flat < n; flat++) {
-            float v = srcSeg.get(ValueLayout.JAVA_FLOAT, (long) (offset + shape.flatIndex(indices)) * Float.BYTES);
-            dstSeg.set(ValueLayout.JAVA_FLOAT, (long) flat * Float.BYTES, v);
+            dstArr[flat] = srcArr[offset + shape.flatIndex(indices)];
 
             for (int d = indices.length - 1; d >= 0; d--) {
                 if (++indices[d] < shape.dim(d)) break;
@@ -352,8 +341,7 @@ public class Tensor implements Cloneable {
     public Tensor clone() {
         int capacity = (int) storage.capacity();
         Storage dst = alloc(capacity);
-        MemorySegment.copy(storage.segment(), 0L, dst.segment(), 0L,
-                (long) capacity * Float.BYTES);
+        System.arraycopy(storage.array(), 0, dst.array(), 0, capacity);
         return wrapResult(dst, shape, new IdentityFn(this));
     }
 
@@ -387,16 +375,14 @@ public class Tensor implements Cloneable {
 
         int outNumel = outerSize * indices.length * sliceSize;
         Storage out = alloc(outNumel);
-        MemorySegment outSeg = out.segment();
-        MemorySegment srcSeg = storage.segment();
+        float[] outArr = out.array();
+        float[] srcArr = storage.array();
         int outPos = 0;
 
         for (int outer = 0; outer < outerSize; outer++) {
             int outerOff = offset + outer * dimStride;
             for (int idx : indices) {
-                MemorySegment.copy(srcSeg, (long) (outerOff + idx * sliceSize) * Float.BYTES,
-                        outSeg, (long) outPos * Float.BYTES,
-                        (long) sliceSize * Float.BYTES);
+                System.arraycopy(srcArr, outerOff + idx * sliceSize, outArr, outPos, sliceSize);
                 outPos += sliceSize;
             }
         }
@@ -419,7 +405,7 @@ public class Tensor implements Cloneable {
     public Tensor sum() {
         float val = Ops.sum(this);
         Storage out = alloc(1);
-        out.segment().set(ValueLayout.JAVA_FLOAT, 0L, val);
+        out.array()[0] = val;
         return wrapResult(out, new Shape(1, 1), new SumFn(this));
     }
 
@@ -469,7 +455,7 @@ public class Tensor implements Cloneable {
     public Tensor mean() {
         float val = Ops.mean(this);
         Storage out = alloc(1);
-        out.segment().set(ValueLayout.JAVA_FLOAT, 0L, val);
+        out.array()[0] = val;
         return wrapResult(out, new Shape(1, 1), new MeanFn(this));
     }
 

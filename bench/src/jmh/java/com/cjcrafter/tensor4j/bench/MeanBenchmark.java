@@ -2,11 +2,9 @@ package com.cjcrafter.tensor4j.bench;
 
 import com.cjcrafter.tensor4j.DType;
 import com.cjcrafter.tensor4j.backend.cpu.CpuF32Kernels;
-import com.cjcrafter.tensor4j.memory.NativeStorage;
+import com.cjcrafter.tensor4j.memory.HeapStorage;
 import org.openjdk.jmh.annotations.*;
 
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
@@ -21,16 +19,15 @@ public class MeanBenchmark {
     @Param({"64", "4096", "65536"})
     private int size;
 
-    private NativeStorage data;
+    private HeapStorage data;
 
     @Setup(Level.Trial)
     public void setup() {
         Random rng = new Random(42);
-        data = NativeStorage.allocate(DType.F32, size);
-        data.incRef();
-        MemorySegment seg = data.segment();
+        data = HeapStorage.allocate(DType.F32, size);
+        float[] arr = data.array();
         for (int i = 0; i < size; i++) {
-            seg.setAtIndex(ValueLayout.JAVA_FLOAT, i, (float) rng.nextGaussian());
+            arr[i] = (float) rng.nextGaussian();
         }
     }
 

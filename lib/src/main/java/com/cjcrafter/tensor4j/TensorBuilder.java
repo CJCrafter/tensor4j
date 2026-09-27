@@ -1,12 +1,10 @@
 package com.cjcrafter.tensor4j;
 
 import com.cjcrafter.tensor4j.memory.Allocator;
-import com.cjcrafter.tensor4j.memory.CpuAllocator;
-import com.cjcrafter.tensor4j.memory.NativeStorage;
+import com.cjcrafter.tensor4j.memory.HeapAllocator;
+import com.cjcrafter.tensor4j.memory.Storage;
 import com.google.common.base.Preconditions;
 
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.util.random.RandomGenerator;
 
 /**
@@ -16,12 +14,12 @@ public final class TensorBuilder {
 
     private Shape shape;
     private boolean requiresGrad;
-    private Allocator allocator = CpuAllocator.instance();
+    private Allocator allocator = HeapAllocator.instance();
 
     TensorBuilder() {
     }
 
-    /** Overrides the default {@link CpuAllocator} for this build. */
+    /** Overrides the default {@link HeapAllocator} for this build. */
     public TensorBuilder allocator(Allocator allocator) {
         this.allocator = Preconditions.checkNotNull(allocator, "allocator");
         return this;
@@ -31,11 +29,11 @@ public final class TensorBuilder {
         Preconditions.checkNotNull(shape, "shape");
 
         int n = shape.numel();
-        NativeStorage ns = NativeStorage.allocate(allocator, DType.F32, n);
-        MemorySegment seg = ns.segment();
+        Storage s = allocator.allocate(DType.F32, n);
+        float[] arr = s.array();
         for (int i = 0; i < n; i++)
-            seg.setAtIndex(ValueLayout.JAVA_FLOAT, i, gen.at(i));
-        return new Tensor(ns, shape, 0, requiresGrad);
+            arr[i] = gen.at(i);
+        return new Tensor(s, shape, 0, requiresGrad);
     }
 
     @FunctionalInterface
@@ -129,9 +127,9 @@ public final class TensorBuilder {
         if (data.length != shape.numel())
             throw new IllegalArgumentException("data did not match shape " + shape);
 
-        NativeStorage ns = NativeStorage.allocate(allocator, DType.F32, data.length);
-        MemorySegment.copy(data, 0, ns.segment(), ValueLayout.JAVA_FLOAT, 0L, data.length);
-        return new Tensor(ns, shape, 0, requiresGrad);
+        Storage s = allocator.allocate(DType.F32, data.length);
+        System.arraycopy(data, 0, s.array(), 0, data.length);
+        return new Tensor(s, shape, 0, requiresGrad);
     }
 
     /**

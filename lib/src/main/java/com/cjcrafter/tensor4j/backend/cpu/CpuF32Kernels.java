@@ -8,14 +8,10 @@ import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
-import java.nio.ByteOrder;
-
 import static jdk.incubator.vector.VectorOperators.*;
 
 /**
- * F32 CPU kernels backed by {@link MemorySegment}.
+ * F32 CPU kernels backed by plain heap {@code float[]} arrays.
  */
 public final class CpuF32Kernels implements F32KernelTable {
 
@@ -32,12 +28,9 @@ public final class CpuF32Kernels implements F32KernelTable {
     private static final VectorSpecies<Float> SPECIES = FloatVector.SPECIES_PREFERRED;
     private static final FloatVector ZERO = FloatVector.zero(SPECIES);
     private static final FloatVector ONE = FloatVector.broadcast(SPECIES, 1f);
-    private static final ByteOrder NATIVE = ByteOrder.nativeOrder();
-    private static final ValueLayout.OfFloat F32 = ValueLayout.JAVA_FLOAT;
-    private static final long F32_BYTES = 4L;
 
-    private static MemorySegment seg(Storage s) {
-        return s.segment();
+    private static float[] arr(Storage s) {
+        return s.array();
     }
 
     @Override
@@ -99,18 +92,14 @@ public final class CpuF32Kernels implements F32KernelTable {
     private static final int I_TILE = 256;
 
     @Override
-    public void matmul(Storage aS, int aOffI, int m, int k,
-                       Storage bS, int bOffI, int n,
-                       Storage cS, int cOffI) {
-        MemorySegment a = seg(aS);
-        MemorySegment b = seg(bS);
-        MemorySegment c = seg(cS);
-        long aOff = aOffI;
-        long bOff = bOffI;
-        long cOff = cOffI;
+    public void matmul(Storage aS, int aOff, int m, int k,
+                       Storage bS, int bOff, int n,
+                       Storage cS, int cOff) {
+        float[] a = arr(aS);
+        float[] b = arr(bS);
+        float[] c = arr(cS);
 
         float[] bPacked = new float[K_TILE * J_TILE];
-        MemorySegment bPackedSeg = MemorySegment.ofArray(bPacked);
 
         for (int it = 0; it < m; it += I_TILE) {
             int iEnd = Math.min(m, it + I_TILE);
@@ -124,129 +113,121 @@ public final class CpuF32Kernels implements F32KernelTable {
             int jTileWidth = jEnd - jt;
 
             for (int p = pt; p < pEnd; p++) {
-                MemorySegment.copy(b, (bOff + p * n + jt) * F32_BYTES,
-                        bPackedSeg, (long)(p - pt) * jTileWidth * F32_BYTES,
-                        (long) jTileWidth * F32_BYTES);
+                System.arraycopy(b, bOff + p * n + jt, bPacked, (p - pt) * jTileWidth, jTileWidth);
             }
 
             int i = it;
             for (; i <= iEnd - REGISTER_BLOCKS; i += REGISTER_BLOCKS) {
-                long aRowOff0 = (aOff + i * k) * F32_BYTES;
-                long aRowOff1 = (aOff + (i + 1) * k) * F32_BYTES;
-                long aRowOff2 = (aOff + (i + 2) * k) * F32_BYTES;
-                long aRowOff3 = (aOff + (i + 3) * k) * F32_BYTES;
-                long aRowOff4 = (aOff + (i + 4) * k) * F32_BYTES;
-                long aRowOff5 = (aOff + (i + 5) * k) * F32_BYTES;
-                long aRowOff6 = (aOff + (i + 6) * k) * F32_BYTES;
-                long aRowOff7 = (aOff + (i + 7) * k) * F32_BYTES;
-                long cRowOff0 = (cOff + i * n) * F32_BYTES;
-                long cRowOff1 = (cOff + (i + 1) * n) * F32_BYTES;
-                long cRowOff2 = (cOff + (i + 2) * n) * F32_BYTES;
-                long cRowOff3 = (cOff + (i + 3) * n) * F32_BYTES;
-                long cRowOff4 = (cOff + (i + 4) * n) * F32_BYTES;
-                long cRowOff5 = (cOff + (i + 5) * n) * F32_BYTES;
-                long cRowOff6 = (cOff + (i + 6) * n) * F32_BYTES;
-                long cRowOff7 = (cOff + (i + 7) * n) * F32_BYTES;
+                int aRowOff0 = aOff + i * k;
+                int aRowOff1 = aOff + (i + 1) * k;
+                int aRowOff2 = aOff + (i + 2) * k;
+                int aRowOff3 = aOff + (i + 3) * k;
+                int aRowOff4 = aOff + (i + 4) * k;
+                int aRowOff5 = aOff + (i + 5) * k;
+                int aRowOff6 = aOff + (i + 6) * k;
+                int aRowOff7 = aOff + (i + 7) * k;
+                int cRowOff0 = cOff + i * n;
+                int cRowOff1 = cOff + (i + 1) * n;
+                int cRowOff2 = cOff + (i + 2) * n;
+                int cRowOff3 = cOff + (i + 3) * n;
+                int cRowOff4 = cOff + (i + 4) * n;
+                int cRowOff5 = cOff + (i + 5) * n;
+                int cRowOff6 = cOff + (i + 6) * n;
+                int cRowOff7 = cOff + (i + 7) * n;
 
                 int j = jt;
                 for (; j < jBound; j += SPECIES.length()) {
-                    long jBytes = (long) j * F32_BYTES;
-                    var vc0 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff0 + jBytes, NATIVE);
-                    var vc1 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff1 + jBytes, NATIVE);
-                    var vc2 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff2 + jBytes, NATIVE);
-                    var vc3 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff3 + jBytes, NATIVE);
-                    var vc4 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff4 + jBytes, NATIVE);
-                    var vc5 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff5 + jBytes, NATIVE);
-                    var vc6 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff6 + jBytes, NATIVE);
-                    var vc7 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff7 + jBytes, NATIVE);
+                    var vc0 = FloatVector.fromArray(SPECIES, c, cRowOff0 + j);
+                    var vc1 = FloatVector.fromArray(SPECIES, c, cRowOff1 + j);
+                    var vc2 = FloatVector.fromArray(SPECIES, c, cRowOff2 + j);
+                    var vc3 = FloatVector.fromArray(SPECIES, c, cRowOff3 + j);
+                    var vc4 = FloatVector.fromArray(SPECIES, c, cRowOff4 + j);
+                    var vc5 = FloatVector.fromArray(SPECIES, c, cRowOff5 + j);
+                    var vc6 = FloatVector.fromArray(SPECIES, c, cRowOff6 + j);
+                    var vc7 = FloatVector.fromArray(SPECIES, c, cRowOff7 + j);
 
                     for (int p = pt; p < pEnd; p++) {
-                        long bPackedOffBytes = ((long)(p - pt) * jTileWidth + (j - jt)) * F32_BYTES;
-                        var vb = FloatVector.fromMemorySegment(SPECIES, bPackedSeg, bPackedOffBytes, NATIVE);
-                        long pBytes = (long) p * F32_BYTES;
-                        vc0 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff0 + pBytes)).fma(vb, vc0);
-                        vc1 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff1 + pBytes)).fma(vb, vc1);
-                        vc2 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff2 + pBytes)).fma(vb, vc2);
-                        vc3 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff3 + pBytes)).fma(vb, vc3);
-                        vc4 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff4 + pBytes)).fma(vb, vc4);
-                        vc5 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff5 + pBytes)).fma(vb, vc5);
-                        vc6 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff6 + pBytes)).fma(vb, vc6);
-                        vc7 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff7 + pBytes)).fma(vb, vc7);
+                        int bPackedOff = (p - pt) * jTileWidth + (j - jt);
+                        var vb = FloatVector.fromArray(SPECIES, bPacked, bPackedOff);
+                        vc0 = FloatVector.broadcast(SPECIES, a[aRowOff0 + p]).fma(vb, vc0);
+                        vc1 = FloatVector.broadcast(SPECIES, a[aRowOff1 + p]).fma(vb, vc1);
+                        vc2 = FloatVector.broadcast(SPECIES, a[aRowOff2 + p]).fma(vb, vc2);
+                        vc3 = FloatVector.broadcast(SPECIES, a[aRowOff3 + p]).fma(vb, vc3);
+                        vc4 = FloatVector.broadcast(SPECIES, a[aRowOff4 + p]).fma(vb, vc4);
+                        vc5 = FloatVector.broadcast(SPECIES, a[aRowOff5 + p]).fma(vb, vc5);
+                        vc6 = FloatVector.broadcast(SPECIES, a[aRowOff6 + p]).fma(vb, vc6);
+                        vc7 = FloatVector.broadcast(SPECIES, a[aRowOff7 + p]).fma(vb, vc7);
                     }
 
-                    vc0.intoMemorySegment(c, cRowOff0 + jBytes, NATIVE);
-                    vc1.intoMemorySegment(c, cRowOff1 + jBytes, NATIVE);
-                    vc2.intoMemorySegment(c, cRowOff2 + jBytes, NATIVE);
-                    vc3.intoMemorySegment(c, cRowOff3 + jBytes, NATIVE);
-                    vc4.intoMemorySegment(c, cRowOff4 + jBytes, NATIVE);
-                    vc5.intoMemorySegment(c, cRowOff5 + jBytes, NATIVE);
-                    vc6.intoMemorySegment(c, cRowOff6 + jBytes, NATIVE);
-                    vc7.intoMemorySegment(c, cRowOff7 + jBytes, NATIVE);
+                    vc0.intoArray(c, cRowOff0 + j);
+                    vc1.intoArray(c, cRowOff1 + j);
+                    vc2.intoArray(c, cRowOff2 + j);
+                    vc3.intoArray(c, cRowOff3 + j);
+                    vc4.intoArray(c, cRowOff4 + j);
+                    vc5.intoArray(c, cRowOff5 + j);
+                    vc6.intoArray(c, cRowOff6 + j);
+                    vc7.intoArray(c, cRowOff7 + j);
                 }
 
                 if (j < jEnd) {
                     var mask = SPECIES.indexInRange(j - jt, jEnd - jt);
-                    long jBytes = (long) j * F32_BYTES;
-                    var vc0 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff0 + jBytes, NATIVE, mask);
-                    var vc1 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff1 + jBytes, NATIVE, mask);
-                    var vc2 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff2 + jBytes, NATIVE, mask);
-                    var vc3 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff3 + jBytes, NATIVE, mask);
-                    var vc4 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff4 + jBytes, NATIVE, mask);
-                    var vc5 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff5 + jBytes, NATIVE, mask);
-                    var vc6 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff6 + jBytes, NATIVE, mask);
-                    var vc7 = FloatVector.fromMemorySegment(SPECIES, c, cRowOff7 + jBytes, NATIVE, mask);
+                    var vc0 = FloatVector.fromArray(SPECIES, c, cRowOff0 + j, mask);
+                    var vc1 = FloatVector.fromArray(SPECIES, c, cRowOff1 + j, mask);
+                    var vc2 = FloatVector.fromArray(SPECIES, c, cRowOff2 + j, mask);
+                    var vc3 = FloatVector.fromArray(SPECIES, c, cRowOff3 + j, mask);
+                    var vc4 = FloatVector.fromArray(SPECIES, c, cRowOff4 + j, mask);
+                    var vc5 = FloatVector.fromArray(SPECIES, c, cRowOff5 + j, mask);
+                    var vc6 = FloatVector.fromArray(SPECIES, c, cRowOff6 + j, mask);
+                    var vc7 = FloatVector.fromArray(SPECIES, c, cRowOff7 + j, mask);
 
                     for (int p = pt; p < pEnd; p++) {
-                        long bPackedOffBytes = ((long)(p - pt) * jTileWidth + (j - jt)) * F32_BYTES;
-                        var vb = FloatVector.fromMemorySegment(SPECIES, bPackedSeg, bPackedOffBytes, NATIVE, mask);
-                        long pBytes = (long) p * F32_BYTES;
-                        vc0 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff0 + pBytes)).fma(vb, vc0);
-                        vc1 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff1 + pBytes)).fma(vb, vc1);
-                        vc2 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff2 + pBytes)).fma(vb, vc2);
-                        vc3 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff3 + pBytes)).fma(vb, vc3);
-                        vc4 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff4 + pBytes)).fma(vb, vc4);
-                        vc5 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff5 + pBytes)).fma(vb, vc5);
-                        vc6 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff6 + pBytes)).fma(vb, vc6);
-                        vc7 = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff7 + pBytes)).fma(vb, vc7);
+                        int bPackedOff = (p - pt) * jTileWidth + (j - jt);
+                        var vb = FloatVector.fromArray(SPECIES, bPacked, bPackedOff, mask);
+                        vc0 = FloatVector.broadcast(SPECIES, a[aRowOff0 + p]).fma(vb, vc0);
+                        vc1 = FloatVector.broadcast(SPECIES, a[aRowOff1 + p]).fma(vb, vc1);
+                        vc2 = FloatVector.broadcast(SPECIES, a[aRowOff2 + p]).fma(vb, vc2);
+                        vc3 = FloatVector.broadcast(SPECIES, a[aRowOff3 + p]).fma(vb, vc3);
+                        vc4 = FloatVector.broadcast(SPECIES, a[aRowOff4 + p]).fma(vb, vc4);
+                        vc5 = FloatVector.broadcast(SPECIES, a[aRowOff5 + p]).fma(vb, vc5);
+                        vc6 = FloatVector.broadcast(SPECIES, a[aRowOff6 + p]).fma(vb, vc6);
+                        vc7 = FloatVector.broadcast(SPECIES, a[aRowOff7 + p]).fma(vb, vc7);
                     }
 
-                    vc0.intoMemorySegment(c, cRowOff0 + jBytes, NATIVE, mask);
-                    vc1.intoMemorySegment(c, cRowOff1 + jBytes, NATIVE, mask);
-                    vc2.intoMemorySegment(c, cRowOff2 + jBytes, NATIVE, mask);
-                    vc3.intoMemorySegment(c, cRowOff3 + jBytes, NATIVE, mask);
-                    vc4.intoMemorySegment(c, cRowOff4 + jBytes, NATIVE, mask);
-                    vc5.intoMemorySegment(c, cRowOff5 + jBytes, NATIVE, mask);
-                    vc6.intoMemorySegment(c, cRowOff6 + jBytes, NATIVE, mask);
-                    vc7.intoMemorySegment(c, cRowOff7 + jBytes, NATIVE, mask);
+                    vc0.intoArray(c, cRowOff0 + j, mask);
+                    vc1.intoArray(c, cRowOff1 + j, mask);
+                    vc2.intoArray(c, cRowOff2 + j, mask);
+                    vc3.intoArray(c, cRowOff3 + j, mask);
+                    vc4.intoArray(c, cRowOff4 + j, mask);
+                    vc5.intoArray(c, cRowOff5 + j, mask);
+                    vc6.intoArray(c, cRowOff6 + j, mask);
+                    vc7.intoArray(c, cRowOff7 + j, mask);
                 }
             }
 
             for (; i < iEnd; i++) {
-                long aRowOff = (aOff + i * k) * F32_BYTES;
-                long cRowOff = (cOff + i * n) * F32_BYTES;
+                int aRowOff = aOff + i * k;
+                int cRowOff = cOff + i * n;
                 int j = jt;
                 for (; j < jBound; j += SPECIES.length()) {
-                    long jBytes = (long) j * F32_BYTES;
-                    var vc = FloatVector.fromMemorySegment(SPECIES, c, cRowOff + jBytes, NATIVE);
+                    var vc = FloatVector.fromArray(SPECIES, c, cRowOff + j);
                     for (int p = pt; p < pEnd; p++) {
-                        long bPackedOffBytes = ((long)(p - pt) * jTileWidth + (j - jt)) * F32_BYTES;
-                        var aVal = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff + (long) p * F32_BYTES));
-                        var vb = FloatVector.fromMemorySegment(SPECIES, bPackedSeg, bPackedOffBytes, NATIVE);
+                        int bPackedOff = (p - pt) * jTileWidth + (j - jt);
+                        var aVal = FloatVector.broadcast(SPECIES, a[aRowOff + p]);
+                        var vb = FloatVector.fromArray(SPECIES, bPacked, bPackedOff);
                         vc = aVal.fma(vb, vc);
                     }
-                    vc.intoMemorySegment(c, cRowOff + jBytes, NATIVE);
+                    vc.intoArray(c, cRowOff + j);
                 }
                 if (j < jEnd) {
                     var mask = SPECIES.indexInRange(j - jt, jEnd - jt);
-                    long jBytes = (long) j * F32_BYTES;
-                    var vc = FloatVector.fromMemorySegment(SPECIES, c, cRowOff + jBytes, NATIVE, mask);
+                    var vc = FloatVector.fromArray(SPECIES, c, cRowOff + j, mask);
                     for (int p = pt; p < pEnd; p++) {
-                        long bPackedOffBytes = ((long)(p - pt) * jTileWidth + (j - jt)) * F32_BYTES;
-                        var aVal = FloatVector.broadcast(SPECIES, a.get(F32, aRowOff + (long) p * F32_BYTES));
-                        var vb = FloatVector.fromMemorySegment(SPECIES, bPackedSeg, bPackedOffBytes, NATIVE, mask);
+                        int bPackedOff = (p - pt) * jTileWidth + (j - jt);
+                        var aVal = FloatVector.broadcast(SPECIES, a[aRowOff + p]);
+                        var vb = FloatVector.fromArray(SPECIES, bPacked, bPackedOff, mask);
                         vc = aVal.fma(vb, vc);
                     }
-                    vc.intoMemorySegment(c, cRowOff + jBytes, NATIVE, mask);
+                    vc.intoArray(c, cRowOff + j, mask);
                 }
             }
         }
@@ -259,9 +240,8 @@ public final class CpuF32Kernels implements F32KernelTable {
     // ------------------ //
 
     @Override
-    public float sum(Storage aS, int aOffI, int len) {
-        MemorySegment a = seg(aS);
-        long aOff = aOffI;
+    public float sum(Storage aS, int aOff, int len) {
+        float[] a = arr(aS);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
@@ -275,17 +255,17 @@ public final class CpuF32Kernels implements F32KernelTable {
         var vs6 = ZERO;
         var vs7 = ZERO;
 
-        int laneBytes = SPECIES.length() * 4;
+        int lane = SPECIES.length();
         for (; i < blockBound; i += step) {
-            long base = (aOff + i) * F32_BYTES;
-            vs0 = vs0.add(FloatVector.fromMemorySegment(SPECIES, a, base, NATIVE));
-            vs1 = vs1.add(FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes, NATIVE));
-            vs2 = vs2.add(FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 2L, NATIVE));
-            vs3 = vs3.add(FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 3L, NATIVE));
-            vs4 = vs4.add(FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 4L, NATIVE));
-            vs5 = vs5.add(FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 5L, NATIVE));
-            vs6 = vs6.add(FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 6L, NATIVE));
-            vs7 = vs7.add(FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 7L, NATIVE));
+            int base = aOff + i;
+            vs0 = vs0.add(FloatVector.fromArray(SPECIES, a, base));
+            vs1 = vs1.add(FloatVector.fromArray(SPECIES, a, base + lane));
+            vs2 = vs2.add(FloatVector.fromArray(SPECIES, a, base + lane * 2));
+            vs3 = vs3.add(FloatVector.fromArray(SPECIES, a, base + lane * 3));
+            vs4 = vs4.add(FloatVector.fromArray(SPECIES, a, base + lane * 4));
+            vs5 = vs5.add(FloatVector.fromArray(SPECIES, a, base + lane * 5));
+            vs6 = vs6.add(FloatVector.fromArray(SPECIES, a, base + lane * 6));
+            vs7 = vs7.add(FloatVector.fromArray(SPECIES, a, base + lane * 7));
         }
 
         var vsum = vs0.add(vs1).add(vs2).add(vs3)
@@ -293,23 +273,22 @@ public final class CpuF32Kernels implements F32KernelTable {
 
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
-            vsum = vsum.add(FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE));
+            vsum = vsum.add(FloatVector.fromArray(SPECIES, a, aOff + i));
         }
 
         float sum = vsum.reduceLanes(VectorOperators.ADD);
 
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE, mask);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i, mask);
             sum += va.reduceLanes(VectorOperators.ADD, mask);
         }
         return sum;
     }
 
     @Override
-    public float mean(Storage aS, int aOffI, int len) {
-        MemorySegment a = seg(aS);
-        long aOff = aOffI;
+    public float mean(Storage aS, int aOff, int len) {
+        float[] a = arr(aS);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
@@ -323,17 +302,17 @@ public final class CpuF32Kernels implements F32KernelTable {
         var vs6 = ZERO; var vc6 = ZERO;
         var vs7 = ZERO; var vc7 = ZERO;
 
-        int laneBytes = SPECIES.length() * 4;
+        int lane = SPECIES.length();
         for (; i < blockBound; i += step) {
-            long base = (aOff + i) * F32_BYTES;
-            var va0 = FloatVector.fromMemorySegment(SPECIES, a, base, NATIVE);
-            var va1 = FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes, NATIVE);
-            var va2 = FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 2L, NATIVE);
-            var va3 = FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 3L, NATIVE);
-            var va4 = FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 4L, NATIVE);
-            var va5 = FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 5L, NATIVE);
-            var va6 = FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 6L, NATIVE);
-            var va7 = FloatVector.fromMemorySegment(SPECIES, a, base + laneBytes * 7L, NATIVE);
+            int base = aOff + i;
+            var va0 = FloatVector.fromArray(SPECIES, a, base);
+            var va1 = FloatVector.fromArray(SPECIES, a, base + lane);
+            var va2 = FloatVector.fromArray(SPECIES, a, base + lane * 2);
+            var va3 = FloatVector.fromArray(SPECIES, a, base + lane * 3);
+            var va4 = FloatVector.fromArray(SPECIES, a, base + lane * 4);
+            var va5 = FloatVector.fromArray(SPECIES, a, base + lane * 5);
+            var va6 = FloatVector.fromArray(SPECIES, a, base + lane * 6);
+            var va7 = FloatVector.fromArray(SPECIES, a, base + lane * 7);
 
             var y0 = va0.sub(vc0); var t0 = vs0.add(y0);
             var y1 = va1.sub(vc1); var t1 = vs1.add(y1);
@@ -364,7 +343,7 @@ public final class CpuF32Kernels implements F32KernelTable {
 
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i);
             var y = va.sub(vcomp);
             var t = vsum.add(y);
             vcomp = t.sub(vsum).sub(y);
@@ -375,7 +354,7 @@ public final class CpuF32Kernels implements F32KernelTable {
         float comp = vcomp.reduceLanes(VectorOperators.ADD);
 
         for (; i < len; i++) {
-            float val = a.get(F32, (aOff + i) * F32_BYTES);
+            float val = a[aOff + i];
             float y = val - comp;
             float t = sum + y;
             comp = (t - sum) - y;
@@ -386,10 +365,9 @@ public final class CpuF32Kernels implements F32KernelTable {
     }
 
     @Override
-    public void sumDim(Storage aS, int aOffI, int[] dims, int dim, Storage outS) {
-        MemorySegment a = seg(aS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
+    public void sumDim(Storage aS, int aOff, int[] dims, int dim, Storage outS) {
+        float[] a = arr(aS);
+        float[] out = arr(outS);
         int ndim = dims.length;
 
         int outer = 1;
@@ -403,32 +381,29 @@ public final class CpuF32Kernels implements F32KernelTable {
             int aBase = o * reduceDim * inner;
 
             for (int i = 0; i < inner; i++)
-                out.set(F32, (long) (outBase + i) * F32_BYTES, 0f);
+                out[outBase + i] = 0f;
 
             for (int r = 0; r < reduceDim; r++) {
-                long aSlice = aOff + aBase + r * inner;
+                int aSlice = aOff + aBase + r * inner;
 
                 int i = 0;
                 int bound = SPECIES.loopBound(inner);
                 for (; i < bound; i += SPECIES.length()) {
-                    var va = FloatVector.fromMemorySegment(SPECIES, a, (aSlice + i) * F32_BYTES, NATIVE);
-                    var vo = FloatVector.fromMemorySegment(SPECIES, out, (long) (outBase + i) * F32_BYTES, NATIVE);
-                    vo.add(va).intoMemorySegment(out, (long) (outBase + i) * F32_BYTES, NATIVE);
+                    var va = FloatVector.fromArray(SPECIES, a, aSlice + i);
+                    var vo = FloatVector.fromArray(SPECIES, out, outBase + i);
+                    vo.add(va).intoArray(out, outBase + i);
                 }
                 for (; i < inner; i++) {
-                    float prev = out.get(F32, (long) (outBase + i) * F32_BYTES);
-                    float add = a.get(F32, (aSlice + i) * F32_BYTES);
-                    out.set(F32, (long) (outBase + i) * F32_BYTES, prev + add);
+                    out[outBase + i] += a[aSlice + i];
                 }
             }
         }
     }
 
     @Override
-    public void maxDim(Storage aS, int aOffI, int[] dims, int dim, Storage outS) {
-        MemorySegment a = seg(aS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
+    public void maxDim(Storage aS, int aOff, int[] dims, int dim, Storage outS) {
+        float[] a = arr(aS);
+        float[] out = arr(outS);
         int ndim = dims.length;
 
         int outer = 1;
@@ -439,28 +414,27 @@ public final class CpuF32Kernels implements F32KernelTable {
 
         for (int o = 0; o < outer; o++) {
             int outBase = o * inner;
-            long aBase = aOff + (long) o * reduceDim * inner;
+            int aBase = aOff + o * reduceDim * inner;
 
             for (int i = 0; i < inner; i++)
-                out.set(F32, (long) (outBase + i) * F32_BYTES, a.get(F32, (aBase + i) * F32_BYTES));
+                out[outBase + i] = a[aBase + i];
 
             for (int r = 1; r < reduceDim; r++) {
-                long aSlice = aBase + (long) r * inner;
+                int aSlice = aBase + r * inner;
                 for (int i = 0; i < inner; i++) {
-                    float v = a.get(F32, (aSlice + i) * F32_BYTES);
-                    float cur = out.get(F32, (long) (outBase + i) * F32_BYTES);
+                    float v = a[aSlice + i];
+                    float cur = out[outBase + i];
                     if (v > cur)
-                        out.set(F32, (long) (outBase + i) * F32_BYTES, v);
+                        out[outBase + i] = v;
                 }
             }
         }
     }
 
     @Override
-    public void argmaxDim(Storage aS, int aOffI, int[] dims, int dim, Storage outS) {
-        MemorySegment a = seg(aS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
+    public void argmaxDim(Storage aS, int aOff, int[] dims, int dim, Storage outS) {
+        float[] a = arr(aS);
+        float[] out = arr(outS);
         int ndim = dims.length;
 
         int outer = 1;
@@ -471,19 +445,19 @@ public final class CpuF32Kernels implements F32KernelTable {
 
         for (int o = 0; o < outer; o++) {
             int outBase = o * inner;
-            long aBase = aOff + (long) o * reduceDim * inner;
+            int aBase = aOff + o * reduceDim * inner;
 
             for (int i = 0; i < inner; i++) {
-                float maxVal = a.get(F32, (aBase + i) * F32_BYTES);
+                float maxVal = a[aBase + i];
                 int maxIdx = 0;
                 for (int r = 1; r < reduceDim; r++) {
-                    float val = a.get(F32, (aBase + (long) r * inner + i) * F32_BYTES);
+                    float val = a[aBase + r * inner + i];
                     if (val > maxVal) {
                         maxVal = val;
                         maxIdx = r;
                     }
                 }
-                out.set(F32, (long) (outBase + i) * F32_BYTES, maxIdx);
+                out[outBase + i] = maxIdx;
             }
         }
     }
@@ -494,47 +468,45 @@ public final class CpuF32Kernels implements F32KernelTable {
 
     @Override
     public void unary(VectorOperators.Unary op,
-                      Storage aS, int aOffI,
-                      Storage outS, int outOffI, int len) {
-        MemorySegment a = seg(aS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
-        long outOff = outOffI;
+                      Storage aS, int aOff,
+                      Storage outS, int outOff, int len) {
+        float[] a = arr(aS);
+        float[] out = arr(outS);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
-        int laneBytes = SPECIES.length() * 4;
+        int lane = SPECIES.length();
 
         for (; i < blockBound; i += step) {
-            long aBase = (aOff + i) * F32_BYTES;
-            long oBase = (outOff + i) * F32_BYTES;
-            var va0 = FloatVector.fromMemorySegment(SPECIES, a, aBase, NATIVE);
-            var va1 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes, NATIVE);
-            var va2 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 2L, NATIVE);
-            var va3 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 3L, NATIVE);
-            var va4 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 4L, NATIVE);
-            var va5 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 5L, NATIVE);
-            var va6 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 6L, NATIVE);
-            var va7 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 7L, NATIVE);
-            va0.lanewise(op).intoMemorySegment(out, oBase, NATIVE);
-            va1.lanewise(op).intoMemorySegment(out, oBase + laneBytes, NATIVE);
-            va2.lanewise(op).intoMemorySegment(out, oBase + laneBytes * 2L, NATIVE);
-            va3.lanewise(op).intoMemorySegment(out, oBase + laneBytes * 3L, NATIVE);
-            va4.lanewise(op).intoMemorySegment(out, oBase + laneBytes * 4L, NATIVE);
-            va5.lanewise(op).intoMemorySegment(out, oBase + laneBytes * 5L, NATIVE);
-            va6.lanewise(op).intoMemorySegment(out, oBase + laneBytes * 6L, NATIVE);
-            va7.lanewise(op).intoMemorySegment(out, oBase + laneBytes * 7L, NATIVE);
+            int aBase = aOff + i;
+            int oBase = outOff + i;
+            var va0 = FloatVector.fromArray(SPECIES, a, aBase);
+            var va1 = FloatVector.fromArray(SPECIES, a, aBase + lane);
+            var va2 = FloatVector.fromArray(SPECIES, a, aBase + lane * 2);
+            var va3 = FloatVector.fromArray(SPECIES, a, aBase + lane * 3);
+            var va4 = FloatVector.fromArray(SPECIES, a, aBase + lane * 4);
+            var va5 = FloatVector.fromArray(SPECIES, a, aBase + lane * 5);
+            var va6 = FloatVector.fromArray(SPECIES, a, aBase + lane * 6);
+            var va7 = FloatVector.fromArray(SPECIES, a, aBase + lane * 7);
+            va0.lanewise(op).intoArray(out, oBase);
+            va1.lanewise(op).intoArray(out, oBase + lane);
+            va2.lanewise(op).intoArray(out, oBase + lane * 2);
+            va3.lanewise(op).intoArray(out, oBase + lane * 3);
+            va4.lanewise(op).intoArray(out, oBase + lane * 4);
+            va5.lanewise(op).intoArray(out, oBase + lane * 5);
+            va6.lanewise(op).intoArray(out, oBase + lane * 6);
+            va7.lanewise(op).intoArray(out, oBase + lane * 7);
         }
 
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE);
-            va.lanewise(op).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i);
+            va.lanewise(op).intoArray(out, outOff + i);
         }
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE, mask);
-            va.lanewise(op).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE, mask);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i, mask);
+            va.lanewise(op).intoArray(out, outOff + i, mask);
         }
     }
 
@@ -544,182 +516,173 @@ public final class CpuF32Kernels implements F32KernelTable {
 
     @Override
     public void binary(VectorOperators.Binary op,
-                       Storage aS, int aOffI,
-                       Storage bS, int bOffI,
-                       Storage outS, int outOffI, int len) {
-        MemorySegment a = seg(aS);
-        MemorySegment b = seg(bS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
-        long bOff = bOffI;
-        long outOff = outOffI;
+                       Storage aS, int aOff,
+                       Storage bS, int bOff,
+                       Storage outS, int outOff, int len) {
+        float[] a = arr(aS);
+        float[] b = arr(bS);
+        float[] out = arr(outS);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
-        int laneBytes = SPECIES.length() * 4;
+        int lane = SPECIES.length();
 
         for (; i < blockBound; i += step) {
-            long aBase = (aOff + i) * F32_BYTES;
-            long bBase = (bOff + i) * F32_BYTES;
-            long oBase = (outOff + i) * F32_BYTES;
-            var va0 = FloatVector.fromMemorySegment(SPECIES, a, aBase, NATIVE);
-            var va1 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes, NATIVE);
-            var va2 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 2L, NATIVE);
-            var va3 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 3L, NATIVE);
-            var va4 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 4L, NATIVE);
-            var va5 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 5L, NATIVE);
-            var va6 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 6L, NATIVE);
-            var va7 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 7L, NATIVE);
-            var vb0 = FloatVector.fromMemorySegment(SPECIES, b, bBase, NATIVE);
-            var vb1 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes, NATIVE);
-            var vb2 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 2L, NATIVE);
-            var vb3 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 3L, NATIVE);
-            var vb4 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 4L, NATIVE);
-            var vb5 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 5L, NATIVE);
-            var vb6 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 6L, NATIVE);
-            var vb7 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 7L, NATIVE);
-            va0.lanewise(op, vb0).intoMemorySegment(out, oBase, NATIVE);
-            va1.lanewise(op, vb1).intoMemorySegment(out, oBase + laneBytes, NATIVE);
-            va2.lanewise(op, vb2).intoMemorySegment(out, oBase + laneBytes * 2L, NATIVE);
-            va3.lanewise(op, vb3).intoMemorySegment(out, oBase + laneBytes * 3L, NATIVE);
-            va4.lanewise(op, vb4).intoMemorySegment(out, oBase + laneBytes * 4L, NATIVE);
-            va5.lanewise(op, vb5).intoMemorySegment(out, oBase + laneBytes * 5L, NATIVE);
-            va6.lanewise(op, vb6).intoMemorySegment(out, oBase + laneBytes * 6L, NATIVE);
-            va7.lanewise(op, vb7).intoMemorySegment(out, oBase + laneBytes * 7L, NATIVE);
+            int aBase = aOff + i;
+            int bBase = bOff + i;
+            int oBase = outOff + i;
+            var va0 = FloatVector.fromArray(SPECIES, a, aBase);
+            var va1 = FloatVector.fromArray(SPECIES, a, aBase + lane);
+            var va2 = FloatVector.fromArray(SPECIES, a, aBase + lane * 2);
+            var va3 = FloatVector.fromArray(SPECIES, a, aBase + lane * 3);
+            var va4 = FloatVector.fromArray(SPECIES, a, aBase + lane * 4);
+            var va5 = FloatVector.fromArray(SPECIES, a, aBase + lane * 5);
+            var va6 = FloatVector.fromArray(SPECIES, a, aBase + lane * 6);
+            var va7 = FloatVector.fromArray(SPECIES, a, aBase + lane * 7);
+            var vb0 = FloatVector.fromArray(SPECIES, b, bBase);
+            var vb1 = FloatVector.fromArray(SPECIES, b, bBase + lane);
+            var vb2 = FloatVector.fromArray(SPECIES, b, bBase + lane * 2);
+            var vb3 = FloatVector.fromArray(SPECIES, b, bBase + lane * 3);
+            var vb4 = FloatVector.fromArray(SPECIES, b, bBase + lane * 4);
+            var vb5 = FloatVector.fromArray(SPECIES, b, bBase + lane * 5);
+            var vb6 = FloatVector.fromArray(SPECIES, b, bBase + lane * 6);
+            var vb7 = FloatVector.fromArray(SPECIES, b, bBase + lane * 7);
+            va0.lanewise(op, vb0).intoArray(out, oBase);
+            va1.lanewise(op, vb1).intoArray(out, oBase + lane);
+            va2.lanewise(op, vb2).intoArray(out, oBase + lane * 2);
+            va3.lanewise(op, vb3).intoArray(out, oBase + lane * 3);
+            va4.lanewise(op, vb4).intoArray(out, oBase + lane * 4);
+            va5.lanewise(op, vb5).intoArray(out, oBase + lane * 5);
+            va6.lanewise(op, vb6).intoArray(out, oBase + lane * 6);
+            va7.lanewise(op, vb7).intoArray(out, oBase + lane * 7);
         }
 
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE);
-            var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + i) * F32_BYTES, NATIVE);
-            va.lanewise(op, vb).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i);
+            var vb = FloatVector.fromArray(SPECIES, b, bOff + i);
+            va.lanewise(op, vb).intoArray(out, outOff + i);
         }
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE, mask);
-            var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + i) * F32_BYTES, NATIVE, mask);
-            va.lanewise(op, vb).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE, mask);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i, mask);
+            var vb = FloatVector.fromArray(SPECIES, b, bOff + i, mask);
+            va.lanewise(op, vb).intoArray(out, outOff + i, mask);
         }
     }
 
     @Override
     public void binaryConst(VectorOperators.Binary op,
-                            Storage aS, int aOffI, float b,
-                            Storage outS, int outOffI, int len) {
-        MemorySegment a = seg(aS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
-        long outOff = outOffI;
+                            Storage aS, int aOff, float b,
+                            Storage outS, int outOff, int len) {
+        float[] a = arr(aS);
+        float[] out = arr(outS);
         var vb = FloatVector.broadcast(SPECIES, b);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
-        int laneBytes = SPECIES.length() * 4;
+        int lane = SPECIES.length();
 
         for (; i < blockBound; i += step) {
-            long aBase = (aOff + i) * F32_BYTES;
-            long oBase = (outOff + i) * F32_BYTES;
-            var va0 = FloatVector.fromMemorySegment(SPECIES, a, aBase, NATIVE);
-            var va1 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes, NATIVE);
-            var va2 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 2L, NATIVE);
-            var va3 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 3L, NATIVE);
-            var va4 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 4L, NATIVE);
-            var va5 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 5L, NATIVE);
-            var va6 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 6L, NATIVE);
-            var va7 = FloatVector.fromMemorySegment(SPECIES, a, aBase + laneBytes * 7L, NATIVE);
-            va0.lanewise(op, vb).intoMemorySegment(out, oBase, NATIVE);
-            va1.lanewise(op, vb).intoMemorySegment(out, oBase + laneBytes, NATIVE);
-            va2.lanewise(op, vb).intoMemorySegment(out, oBase + laneBytes * 2L, NATIVE);
-            va3.lanewise(op, vb).intoMemorySegment(out, oBase + laneBytes * 3L, NATIVE);
-            va4.lanewise(op, vb).intoMemorySegment(out, oBase + laneBytes * 4L, NATIVE);
-            va5.lanewise(op, vb).intoMemorySegment(out, oBase + laneBytes * 5L, NATIVE);
-            va6.lanewise(op, vb).intoMemorySegment(out, oBase + laneBytes * 6L, NATIVE);
-            va7.lanewise(op, vb).intoMemorySegment(out, oBase + laneBytes * 7L, NATIVE);
+            int aBase = aOff + i;
+            int oBase = outOff + i;
+            var va0 = FloatVector.fromArray(SPECIES, a, aBase);
+            var va1 = FloatVector.fromArray(SPECIES, a, aBase + lane);
+            var va2 = FloatVector.fromArray(SPECIES, a, aBase + lane * 2);
+            var va3 = FloatVector.fromArray(SPECIES, a, aBase + lane * 3);
+            var va4 = FloatVector.fromArray(SPECIES, a, aBase + lane * 4);
+            var va5 = FloatVector.fromArray(SPECIES, a, aBase + lane * 5);
+            var va6 = FloatVector.fromArray(SPECIES, a, aBase + lane * 6);
+            var va7 = FloatVector.fromArray(SPECIES, a, aBase + lane * 7);
+            va0.lanewise(op, vb).intoArray(out, oBase);
+            va1.lanewise(op, vb).intoArray(out, oBase + lane);
+            va2.lanewise(op, vb).intoArray(out, oBase + lane * 2);
+            va3.lanewise(op, vb).intoArray(out, oBase + lane * 3);
+            va4.lanewise(op, vb).intoArray(out, oBase + lane * 4);
+            va5.lanewise(op, vb).intoArray(out, oBase + lane * 5);
+            va6.lanewise(op, vb).intoArray(out, oBase + lane * 6);
+            va7.lanewise(op, vb).intoArray(out, oBase + lane * 7);
         }
 
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE);
-            va.lanewise(op, vb).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i);
+            va.lanewise(op, vb).intoArray(out, outOff + i);
         }
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE, mask);
-            va.lanewise(op, vb).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE, mask);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i, mask);
+            va.lanewise(op, vb).intoArray(out, outOff + i, mask);
         }
     }
 
     @Override
     public void rbinaryConst(VectorOperators.Binary op,
-                             float a, Storage bS, int bOffI,
-                             Storage outS, int outOffI, int len) {
-        MemorySegment b = seg(bS);
-        MemorySegment out = seg(outS);
-        long bOff = bOffI;
-        long outOff = outOffI;
+                             float a, Storage bS, int bOff,
+                             Storage outS, int outOff, int len) {
+        float[] b = arr(bS);
+        float[] out = arr(outS);
         var va = FloatVector.broadcast(SPECIES, a);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
-        int laneBytes = SPECIES.length() * 4;
+        int lane = SPECIES.length();
 
         for (; i < blockBound; i += step) {
-            long bBase = (bOff + i) * F32_BYTES;
-            long oBase = (outOff + i) * F32_BYTES;
-            var vb0 = FloatVector.fromMemorySegment(SPECIES, b, bBase, NATIVE);
-            var vb1 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes, NATIVE);
-            var vb2 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 2L, NATIVE);
-            var vb3 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 3L, NATIVE);
-            var vb4 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 4L, NATIVE);
-            var vb5 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 5L, NATIVE);
-            var vb6 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 6L, NATIVE);
-            var vb7 = FloatVector.fromMemorySegment(SPECIES, b, bBase + laneBytes * 7L, NATIVE);
-            va.lanewise(op, vb0).intoMemorySegment(out, oBase, NATIVE);
-            va.lanewise(op, vb1).intoMemorySegment(out, oBase + laneBytes, NATIVE);
-            va.lanewise(op, vb2).intoMemorySegment(out, oBase + laneBytes * 2L, NATIVE);
-            va.lanewise(op, vb3).intoMemorySegment(out, oBase + laneBytes * 3L, NATIVE);
-            va.lanewise(op, vb4).intoMemorySegment(out, oBase + laneBytes * 4L, NATIVE);
-            va.lanewise(op, vb5).intoMemorySegment(out, oBase + laneBytes * 5L, NATIVE);
-            va.lanewise(op, vb6).intoMemorySegment(out, oBase + laneBytes * 6L, NATIVE);
-            va.lanewise(op, vb7).intoMemorySegment(out, oBase + laneBytes * 7L, NATIVE);
+            int bBase = bOff + i;
+            int oBase = outOff + i;
+            var vb0 = FloatVector.fromArray(SPECIES, b, bBase);
+            var vb1 = FloatVector.fromArray(SPECIES, b, bBase + lane);
+            var vb2 = FloatVector.fromArray(SPECIES, b, bBase + lane * 2);
+            var vb3 = FloatVector.fromArray(SPECIES, b, bBase + lane * 3);
+            var vb4 = FloatVector.fromArray(SPECIES, b, bBase + lane * 4);
+            var vb5 = FloatVector.fromArray(SPECIES, b, bBase + lane * 5);
+            var vb6 = FloatVector.fromArray(SPECIES, b, bBase + lane * 6);
+            var vb7 = FloatVector.fromArray(SPECIES, b, bBase + lane * 7);
+            va.lanewise(op, vb0).intoArray(out, oBase);
+            va.lanewise(op, vb1).intoArray(out, oBase + lane);
+            va.lanewise(op, vb2).intoArray(out, oBase + lane * 2);
+            va.lanewise(op, vb3).intoArray(out, oBase + lane * 3);
+            va.lanewise(op, vb4).intoArray(out, oBase + lane * 4);
+            va.lanewise(op, vb5).intoArray(out, oBase + lane * 5);
+            va.lanewise(op, vb6).intoArray(out, oBase + lane * 6);
+            va.lanewise(op, vb7).intoArray(out, oBase + lane * 7);
         }
 
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
-            var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + i) * F32_BYTES, NATIVE);
-            va.lanewise(op, vb).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE);
+            var vb = FloatVector.fromArray(SPECIES, b, bOff + i);
+            va.lanewise(op, vb).intoArray(out, outOff + i);
         }
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
-            var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + i) * F32_BYTES, NATIVE, mask);
-            va.lanewise(op, vb).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE, mask);
+            var vb = FloatVector.fromArray(SPECIES, b, bOff + i, mask);
+            va.lanewise(op, vb).intoArray(out, outOff + i, mask);
         }
     }
 
     @Override
     public void binaryBroadcast(VectorOperators.Binary op,
-                                Storage aS, int[] aStrides, int aOffI,
-                                Storage bS, int[] bStrides, int bOffI,
+                                Storage aS, int[] aStrides, int aOff,
+                                Storage bS, int[] bStrides, int bOff,
                                 Storage outS, Shape resultShape) {
-        MemorySegment a = seg(aS);
-        MemorySegment b = seg(bS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
-        long bOff = bOffI;
+        float[] a = arr(aS);
+        float[] b = arr(bS);
+        float[] out = arr(outS);
         int ndim = resultShape.dimensions();
         int numel = resultShape.numel();
         int[] indices = new int[ndim];
 
         for (int flat = 0; flat < numel; flat++) {
-            long aIdx = aOff;
-            long bIdx = bOff;
+            int aIdx = aOff;
+            int bIdx = bOff;
             for (int d = 0; d < ndim; d++) {
-                aIdx += (long) indices[d] * aStrides[d];
-                bIdx += (long) indices[d] * bStrides[d];
+                aIdx += indices[d] * aStrides[d];
+                bIdx += indices[d] * bStrides[d];
             }
-            float av = a.get(F32, aIdx * F32_BYTES);
-            float bv = b.get(F32, bIdx * F32_BYTES);
-            out.set(F32, (long) flat * F32_BYTES, applyScalarBinary(op, av, bv));
+            float av = a[aIdx];
+            float bv = b[bIdx];
+            out[flat] = applyScalarBinary(op, av, bv);
 
             for (int d = ndim - 1; d >= 0; d--) {
                 if (++indices[d] < resultShape.dim(d)) break;
@@ -734,15 +697,12 @@ public final class CpuF32Kernels implements F32KernelTable {
 
     @Override
     public void compare(VectorOperators.Comparison op,
-                        Storage aS, int aOffI,
-                        Storage bS, int bOffI,
-                        Storage outS, int outOffI, int len) {
-        MemorySegment a = seg(aS);
-        MemorySegment b = seg(bS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
-        long bOff = bOffI;
-        long outOff = outOffI;
+                        Storage aS, int aOff,
+                        Storage bS, int bOff,
+                        Storage outS, int outOff, int len) {
+        float[] a = arr(aS);
+        float[] b = arr(bS);
+        float[] out = arr(outS);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
@@ -750,34 +710,32 @@ public final class CpuF32Kernels implements F32KernelTable {
         for (; i < blockBound; i += step) {
             for (int r = 0; r < REGISTER_BLOCKS; r++) {
                 int off = i + SPECIES.length() * r;
-                var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + off) * F32_BYTES, NATIVE);
-                var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + off) * F32_BYTES, NATIVE);
-                ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (outOff + off) * F32_BYTES, NATIVE);
+                var va = FloatVector.fromArray(SPECIES, a, aOff + off);
+                var vb = FloatVector.fromArray(SPECIES, b, bOff + off);
+                ZERO.blend(ONE, va.compare(op, vb)).intoArray(out, outOff + off);
             }
         }
 
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE);
-            var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + i) * F32_BYTES, NATIVE);
-            ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i);
+            var vb = FloatVector.fromArray(SPECIES, b, bOff + i);
+            ZERO.blend(ONE, va.compare(op, vb)).intoArray(out, outOff + i);
         }
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE, mask);
-            var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + i) * F32_BYTES, NATIVE, mask);
-            ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE, mask);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i, mask);
+            var vb = FloatVector.fromArray(SPECIES, b, bOff + i, mask);
+            ZERO.blend(ONE, va.compare(op, vb)).intoArray(out, outOff + i, mask);
         }
     }
 
     @Override
     public void compareConst(VectorOperators.Comparison op,
-                             Storage aS, int aOffI, float b,
-                             Storage outS, int outOffI, int len) {
-        MemorySegment a = seg(aS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
-        long outOff = outOffI;
+                             Storage aS, int aOff, float b,
+                             Storage outS, int outOff, int len) {
+        float[] a = arr(aS);
+        float[] out = arr(outS);
         var vb = FloatVector.broadcast(SPECIES, b);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
@@ -786,47 +744,45 @@ public final class CpuF32Kernels implements F32KernelTable {
         for (; i < blockBound; i += step) {
             for (int r = 0; r < REGISTER_BLOCKS; r++) {
                 int off = i + SPECIES.length() * r;
-                var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + off) * F32_BYTES, NATIVE);
-                ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (outOff + off) * F32_BYTES, NATIVE);
+                var va = FloatVector.fromArray(SPECIES, a, aOff + off);
+                ZERO.blend(ONE, va.compare(op, vb)).intoArray(out, outOff + off);
             }
         }
 
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE);
-            ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i);
+            ZERO.blend(ONE, va.compare(op, vb)).intoArray(out, outOff + i);
         }
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE, mask);
-            ZERO.blend(ONE, va.compare(op, vb)).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE, mask);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i, mask);
+            ZERO.blend(ONE, va.compare(op, vb)).intoArray(out, outOff + i, mask);
         }
     }
 
     @Override
     public void compareBroadcast(VectorOperators.Comparison op,
-                                 Storage aS, int[] aStrides, int aOffI,
-                                 Storage bS, int[] bStrides, int bOffI,
+                                 Storage aS, int[] aStrides, int aOff,
+                                 Storage bS, int[] bStrides, int bOff,
                                  Storage outS, Shape resultShape) {
-        MemorySegment a = seg(aS);
-        MemorySegment b = seg(bS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
-        long bOff = bOffI;
+        float[] a = arr(aS);
+        float[] b = arr(bS);
+        float[] out = arr(outS);
         int ndim = resultShape.dimensions();
         int numel = resultShape.numel();
         int[] indices = new int[ndim];
 
         for (int flat = 0; flat < numel; flat++) {
-            long aIdx = aOff;
-            long bIdx = bOff;
+            int aIdx = aOff;
+            int bIdx = bOff;
             for (int d = 0; d < ndim; d++) {
-                aIdx += (long) indices[d] * aStrides[d];
-                bIdx += (long) indices[d] * bStrides[d];
+                aIdx += indices[d] * aStrides[d];
+                bIdx += indices[d] * bStrides[d];
             }
-            float av = a.get(F32, aIdx * F32_BYTES);
-            float bv = b.get(F32, bIdx * F32_BYTES);
-            out.set(F32, (long) flat * F32_BYTES, applyScalarComparison(op, av, bv));
+            float av = a[aIdx];
+            float bv = b[bIdx];
+            out[flat] = applyScalarComparison(op, av, bv);
 
             for (int d = ndim - 1; d >= 0; d--) {
                 if (++indices[d] < resultShape.dim(d)) break;
@@ -841,50 +797,46 @@ public final class CpuF32Kernels implements F32KernelTable {
 
     @Override
     public void ternary(VectorOperators.Ternary op,
-                        Storage aS, int aOffI,
-                        Storage bS, int bOffI,
-                        Storage cS, int cOffI,
-                        Storage outS, int outOffI, int len) {
-        MemorySegment a = seg(aS);
-        MemorySegment b = seg(bS);
-        MemorySegment c = seg(cS);
-        MemorySegment out = seg(outS);
-        long aOff = aOffI;
-        long bOff = bOffI;
-        long cOff = cOffI;
-        long outOff = outOffI;
+                        Storage aS, int aOff,
+                        Storage bS, int bOff,
+                        Storage cS, int cOff,
+                        Storage outS, int outOff, int len) {
+        float[] a = arr(aS);
+        float[] b = arr(bS);
+        float[] c = arr(cS);
+        float[] out = arr(outS);
         int i = 0;
         int step = SPECIES.length() * REGISTER_BLOCKS;
         int blockBound = (len / step) * step;
-        int laneBytes = SPECIES.length() * 4;
+        int lane = SPECIES.length();
 
         for (; i < blockBound; i += step) {
-            long aBase = (aOff + i) * F32_BYTES;
-            long bBase = (bOff + i) * F32_BYTES;
-            long cBase = (cOff + i) * F32_BYTES;
-            long oBase = (outOff + i) * F32_BYTES;
+            int aBase = aOff + i;
+            int bBase = bOff + i;
+            int cBase = cOff + i;
+            int oBase = outOff + i;
             for (int r = 0; r < REGISTER_BLOCKS; r++) {
-                long lane = (long) laneBytes * r;
-                var va = FloatVector.fromMemorySegment(SPECIES, a, aBase + lane, NATIVE);
-                var vb = FloatVector.fromMemorySegment(SPECIES, b, bBase + lane, NATIVE);
-                var vc = FloatVector.fromMemorySegment(SPECIES, c, cBase + lane, NATIVE);
-                va.lanewise(op, vb, vc).intoMemorySegment(out, oBase + lane, NATIVE);
+                int off = lane * r;
+                var va = FloatVector.fromArray(SPECIES, a, aBase + off);
+                var vb = FloatVector.fromArray(SPECIES, b, bBase + off);
+                var vc = FloatVector.fromArray(SPECIES, c, cBase + off);
+                va.lanewise(op, vb, vc).intoArray(out, oBase + off);
             }
         }
 
         int bound = SPECIES.loopBound(len);
         for (; i < bound; i += SPECIES.length()) {
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE);
-            var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + i) * F32_BYTES, NATIVE);
-            var vc = FloatVector.fromMemorySegment(SPECIES, c, (cOff + i) * F32_BYTES, NATIVE);
-            va.lanewise(op, vb, vc).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i);
+            var vb = FloatVector.fromArray(SPECIES, b, bOff + i);
+            var vc = FloatVector.fromArray(SPECIES, c, cOff + i);
+            va.lanewise(op, vb, vc).intoArray(out, outOff + i);
         }
         if (i < len) {
             var mask = SPECIES.indexInRange(i, len);
-            var va = FloatVector.fromMemorySegment(SPECIES, a, (aOff + i) * F32_BYTES, NATIVE, mask);
-            var vb = FloatVector.fromMemorySegment(SPECIES, b, (bOff + i) * F32_BYTES, NATIVE, mask);
-            var vc = FloatVector.fromMemorySegment(SPECIES, c, (cOff + i) * F32_BYTES, NATIVE, mask);
-            va.lanewise(op, vb, vc).intoMemorySegment(out, (outOff + i) * F32_BYTES, NATIVE, mask);
+            var va = FloatVector.fromArray(SPECIES, a, aOff + i, mask);
+            var vb = FloatVector.fromArray(SPECIES, b, bOff + i, mask);
+            var vc = FloatVector.fromArray(SPECIES, c, cOff + i, mask);
+            va.lanewise(op, vb, vc).intoArray(out, outOff + i, mask);
         }
     }
 
@@ -893,22 +845,18 @@ public final class CpuF32Kernels implements F32KernelTable {
     // -------------------- //
 
     @Override
-    public void adamw(Storage pS, int pOffI,
-                      Storage gS, int gOffI,
-                      Storage mS, int mOffI,
-                      Storage vS, int vOffI,
+    public void adamw(Storage pS, int pOff,
+                      Storage gS, int gOff,
+                      Storage mS, int mOff,
+                      Storage vS, int vOff,
                       int len,
                       float lr, float beta1, float beta2,
                       float biasCorr1, float biasCorr2,
                       float weightDecay, float eps) {
-        MemorySegment p = seg(pS);
-        MemorySegment g = seg(gS);
-        MemorySegment m = seg(mS);
-        MemorySegment v = seg(vS);
-        long pOff = pOffI;
-        long gOff = gOffI;
-        long mOff = mOffI;
-        long vOff = vOffI;
+        float[] p = arr(pS);
+        float[] g = arr(gS);
+        float[] m = arr(mS);
+        float[] v = arr(vS);
 
         var vBeta1      = FloatVector.broadcast(SPECIES, beta1);
         var vOneMinusB1 = FloatVector.broadcast(SPECIES, 1f - beta1);
@@ -924,15 +872,15 @@ public final class CpuF32Kernels implements F32KernelTable {
         int bound = SPECIES.loopBound(len);
 
         for (; i < bound; i += SPECIES.length()) {
-            long gB = (gOff + i) * F32_BYTES;
-            long mB = (mOff + i) * F32_BYTES;
-            long vB = (vOff + i) * F32_BYTES;
-            long pB = (pOff + i) * F32_BYTES;
+            int gB = gOff + i;
+            int mB = mOff + i;
+            int vB = vOff + i;
+            int pB = pOff + i;
 
-            var vg = FloatVector.fromMemorySegment(SPECIES, g, gB, NATIVE);
-            var vm = FloatVector.fromMemorySegment(SPECIES, m, mB, NATIVE);
-            var vv = FloatVector.fromMemorySegment(SPECIES, v, vB, NATIVE);
-            var vp = FloatVector.fromMemorySegment(SPECIES, p, pB, NATIVE);
+            var vg = FloatVector.fromArray(SPECIES, g, gB);
+            var vm = FloatVector.fromArray(SPECIES, m, mB);
+            var vv = FloatVector.fromArray(SPECIES, v, vB);
+            var vp = FloatVector.fromArray(SPECIES, p, pB);
 
             vm = vBeta1.fma(vm, vOneMinusB1.mul(vg));
             vv = vBeta2.fma(vv, vOneMinusB2.mul(vg.mul(vg)));
@@ -943,31 +891,31 @@ public final class CpuF32Kernels implements F32KernelTable {
             vp = vp.sub(vDecay.mul(vp));
             vp = vp.sub(vLr.mul(mHat.div(vHat.lanewise(SQRT).add(vEps))));
 
-            vm.intoMemorySegment(m, mB, NATIVE);
-            vv.intoMemorySegment(v, vB, NATIVE);
-            vp.intoMemorySegment(p, pB, NATIVE);
+            vm.intoArray(m, mB);
+            vv.intoArray(v, vB);
+            vp.intoArray(p, pB);
         }
 
         float invBC1 = 1f / biasCorr1;
         float invBC2 = 1f / biasCorr2;
         float decay = lr * weightDecay;
         for (; i < len; i++) {
-            long gB = (gOff + i) * F32_BYTES;
-            long mB = (mOff + i) * F32_BYTES;
-            long vB = (vOff + i) * F32_BYTES;
-            long pB = (pOff + i) * F32_BYTES;
-            float gi = g.get(F32, gB);
-            float mi = beta1 * m.get(F32, mB) + (1f - beta1) * gi;
-            float vi = beta2 * v.get(F32, vB) + (1f - beta2) * gi * gi;
-            m.set(F32, mB, mi);
-            v.set(F32, vB, vi);
+            int gB = gOff + i;
+            int mB = mOff + i;
+            int vB = vOff + i;
+            int pB = pOff + i;
+            float gi = g[gB];
+            float mi = beta1 * m[mB] + (1f - beta1) * gi;
+            float vi = beta2 * v[vB] + (1f - beta2) * gi * gi;
+            m[mB] = mi;
+            v[vB] = vi;
 
             float mHat = mi * invBC1;
             float vHat = vi * invBC2;
-            float pi = p.get(F32, pB);
+            float pi = p[pB];
             pi -= decay * pi;
             pi -= lr * mHat / ((float) Math.sqrt(vHat) + eps);
-            p.set(F32, pB, pi);
+            p[pB] = pi;
         }
     }
 }

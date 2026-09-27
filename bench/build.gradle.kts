@@ -13,7 +13,7 @@ dependencies {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(26)
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
@@ -23,7 +23,6 @@ tasks.withType<JavaCompile>().configureEach {
 
 jmh {
     jvmArgs = listOf(
-        "--add-modules=jdk.incubator.vector",
-        "--enable-native-access=ALL-UNNAMED"
+        "--add-modules=jdk.incubator.vector"
     )
 }

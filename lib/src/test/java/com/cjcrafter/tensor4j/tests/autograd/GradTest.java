@@ -7,8 +7,6 @@ import com.cjcrafter.tensor4j.TensorBuilder;
 import com.cjcrafter.tensor4j.nn.layers.*;
 import com.cjcrafter.tensor4j.util.Pair;
 import com.cjcrafter.tensor4j.util.Triple;
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -38,13 +36,11 @@ class GradTest {
     private static final float DELTA = 1e-3f;
 
     private static float read(Tensor t, int flatIdx) {
-        return t.getStorage().segment().get(ValueLayout.JAVA_FLOAT,
-                (long) (t.getOffset() + flatIdx) * Float.BYTES);
+        return t.getStorage().array()[t.getOffset() + flatIdx];
     }
 
     private static void write(Tensor t, int flatIdx, float val) {
-        t.getStorage().segment().set(ValueLayout.JAVA_FLOAT,
-                (long) (t.getOffset() + flatIdx) * Float.BYTES, val);
+        t.getStorage().array()[t.getOffset() + flatIdx] = val;
     }
 
     private static void testElementwiseGradients(Function<Tensor[], Tensor> forward, Tensor... inputs) {

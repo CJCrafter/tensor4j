@@ -2,10 +2,7 @@ package com.cjcrafter.tensor4j.tests;
 
 import com.cjcrafter.tensor4j.DType;
 import com.cjcrafter.tensor4j.backend.cpu.CpuF32Kernels;
-import com.cjcrafter.tensor4j.memory.NativeStorage;
-
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
+import com.cjcrafter.tensor4j.memory.HeapStorage;
 
 import org.junit.jupiter.api.Test;
 
@@ -13,20 +10,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MatmulKernelTest {
 
-    private static NativeStorage store(float... data) {
-        NativeStorage s = NativeStorage.allocate(DType.F32, data.length);
-        MemorySegment seg = s.segment();
-        for (int i = 0; i < data.length; i++)
-            seg.setAtIndex(ValueLayout.JAVA_FLOAT, i, data[i]);
-        s.incRef();
+    private static HeapStorage store(float... data) {
+        HeapStorage s = HeapStorage.allocate(DType.F32, data.length);
+        System.arraycopy(data, 0, s.array(), 0, data.length);
         return s;
-    }
-
-    private static float[] toArray(MemorySegment s, int n) {
-        float[] out = new float[n];
-        for (int i = 0; i < n; i++)
-            out[i] = s.getAtIndex(ValueLayout.JAVA_FLOAT, i);
-        return out;
     }
 
     @Test
@@ -50,17 +37,14 @@ class MatmulKernelTest {
             }
         }
 
-        NativeStorage aStore = store(a);
-        NativeStorage bStore = store(b);
-        NativeStorage outStore = NativeStorage.allocate(DType.F32, 16);
-        outStore.incRef();
-        // zero-init c (matmul accumulates into c)
-        for (int i = 0; i < 16; i++)
-            outStore.segment().setAtIndex(ValueLayout.JAVA_FLOAT, i, 0f);
+        HeapStorage aStore = store(a);
+        HeapStorage bStore = store(b);
+        // fresh arrays are already zero-initialized (matmul accumulates into c)
+        HeapStorage outStore = HeapStorage.allocate(DType.F32, 16);
 
         CpuF32Kernels.instance().matmul(aStore, 0, 8, 3, bStore, 0, 2, outStore, 0);
 
-        float[] actual = toArray(outStore.segment(), 16);
+        float[] actual = outStore.array();
         for (int i = 0; i < 16; i++) {
             assertEquals(expected[i], actual[i], 1e-4f, "mismatch at i=" + i);
         }

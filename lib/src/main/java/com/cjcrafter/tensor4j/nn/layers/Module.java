@@ -4,7 +4,6 @@ import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.io.NpzFormat;
 
 import java.io.IOException;
-import java.lang.foreign.MemorySegment;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.*;
@@ -132,11 +131,9 @@ public abstract class Module {
                     + " elements, got " + sourceNumel);
 
             Tensor src = source.contiguous();
-            MemorySegment.copy(src.getStorage().segment(),
-                    (long) src.getOffset() * Float.BYTES,
-                    target.getStorage().segment(),
-                    (long) target.getOffset() * Float.BYTES,
-                    (long) targetNumel * Float.BYTES);
+            System.arraycopy(src.getStorage().array(), src.getOffset(),
+                    target.getStorage().array(), target.getOffset(),
+                    targetNumel);
         }
     }
 

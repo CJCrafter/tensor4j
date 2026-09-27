@@ -4,10 +4,10 @@ import com.cjcrafter.tensor4j.Device;
 import com.cjcrafter.tensor4j.backend.Backend;
 import com.cjcrafter.tensor4j.backend.F32KernelTable;
 import com.cjcrafter.tensor4j.memory.Allocator;
-import com.cjcrafter.tensor4j.memory.CpuAllocator;
+import com.cjcrafter.tensor4j.memory.HeapAllocator;
 
 /**
- * CPU compute backend. Uses {@link CpuAllocator#instance()} for allocation.
+ * CPU compute backend. Uses {@link HeapAllocator#instance()} for allocation.
  */
 public final class CpuBackend implements Backend {
 
@@ -26,7 +26,7 @@ public final class CpuBackend implements Backend {
 
     @Override
     public Allocator allocator() {
-        return CpuAllocator.instance();
+        return HeapAllocator.instance();
     }
 
     @Override
