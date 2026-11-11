@@ -19,6 +19,9 @@ public class SumFn extends TensorFunction {
         super(input);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         // gradOutput is scalar (1,) broadcast to input shape

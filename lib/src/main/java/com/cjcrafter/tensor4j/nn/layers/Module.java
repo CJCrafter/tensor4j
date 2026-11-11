@@ -1,6 +1,7 @@
 package com.cjcrafter.tensor4j.nn.layers;
 
 import com.cjcrafter.tensor4j.Tensor;
+import com.google.common.base.Preconditions;
 import com.cjcrafter.tensor4j.io.NpzFormat;
 
 import java.io.IOException;
@@ -50,6 +51,26 @@ public abstract class Module {
         // by default, this method should not be implemented by a subclass.
         // Some modules, like Dropout, need to behave differently depending
         // on whether you are training or evaluating.
+    }
+
+    /**
+     * Computes every output of this module for the given input. Single-output modules return
+     * an array holding just {@link #forward(Tensor)}; multi-head modules (e.g. a policy head
+     * and a value head sharing a trunk) should override this to return all of their outputs.
+     *
+     * @param input The input to the neural network.
+     * @return All outputs of the neural network, in a documented order.
+     */
+    public Tensor[] forwardAll(Tensor input) {
+        return new Tensor[]{ forward(input) };
+    }
+
+    /**
+     * Clears the accumulated gradient of every parameter in this module and its children.
+     */
+    public void zeroGrad() {
+        for (Tensor p : parameters())
+            p.zeroGrad();
     }
 
     /**
@@ -131,16 +152,14 @@ public abstract class Module {
         Map<String, Tensor> current = stateDict();
         for (var entry : current.entrySet()) {
             Tensor source = stateDict.get(entry.getKey());
-            if (source == null)
-                throw new IllegalArgumentException("Missing key in state dict: " + entry.getKey());
+            Preconditions.checkArgument(source != null, "Missing key in state dict: %s", entry.getKey());
 
             Tensor target = entry.getValue();
             int targetNumel = target.getShape().numel();
             int sourceNumel = source.getShape().numel();
-            if (targetNumel != sourceNumel)
-                throw new IllegalArgumentException(
-                    "Shape mismatch for '" + entry.getKey() + "': expected " + targetNumel
-                    + " elements, got " + sourceNumel);
+            Preconditions.checkArgument(targetNumel == sourceNumel,
+                    "Shape mismatch for '%s': expected %s elements, got %s",
+                    entry.getKey(), targetNumel, sourceNumel);
 
             Tensor src = source.contiguous();
             System.arraycopy(src.getStorage().array(), src.getOffset(),
@@ -153,6 +172,7 @@ public abstract class Module {
      * Loads this module's parameters from a {@code .npz} file previously written by {@link #save(Path)}.
      *
      * @throws IllegalArgumentException if a required key is missing or shapes don't match.
+     * @param path the file to read or write
      */
     public void load(Path path) throws IOException {
         loadStateDict(NpzFormat.load(path));
@@ -160,6 +180,7 @@ public abstract class Module {
 
     /**
      * Saves this module's {@link #stateDict()} to a {@code .npz} file.
+     * @param path the file to read or write
      */
     public void save(Path path) throws IOException {
         NpzFormat.save(path, stateDict());

@@ -15,6 +15,9 @@ public class IdentityFn extends TensorFunction {
         super(input);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         return new Tensor[] {

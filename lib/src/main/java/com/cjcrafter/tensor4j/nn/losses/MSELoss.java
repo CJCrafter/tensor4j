@@ -19,6 +19,9 @@ public record MSELoss(Reduction reduction) implements Loss {
 
     /**
      * {@inheritDoc}
+     * @param input the input tensor
+     * @param target the target values to compare against
+     * @return the resulting tensor
      */
     public Tensor forward(Tensor input, Tensor target) {
         Tensor diff = input.sub(target).square();

@@ -15,6 +15,8 @@ public class Embedding extends Module {
     /**
      * Creates an embedding table with {@code numEmbeddings} rows of {@code embeddingDim}
      * randomly initialized values each.
+     * @param numEmbeddings the number of rows in the lookup table
+     * @param embeddingDim the size of each embedding vector
      */
     public Embedding(int numEmbeddings, int embeddingDim) {
         this.embeddingDim = embeddingDim;

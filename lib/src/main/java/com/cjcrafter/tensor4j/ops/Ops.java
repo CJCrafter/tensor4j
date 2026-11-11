@@ -26,10 +26,7 @@ public final class Ops {
     }
 
     private static Storage alloc(Tensor t, int numel) {
-        Backend backend = Backends.forDevice(t.device());
-        Preconditions.checkArgument(backend.supports(t.dtype()),
-                "backend %s does not support dtype %s", backend.device(), t.dtype());
-        return backend.allocator().allocate(DType.F32, numel);
+        return Backends.forDevice(t.device()).allocator().allocate(DType.F32, numel);
     }
 
     /**
@@ -335,6 +332,31 @@ public final class Ops {
                 b.getStorage(), b.getOffset(),
                 c.getStorage(), c.getOffset(),
                 out, 0, resultShape.numel());
+        return out;
+    }
+
+    /**
+     * Computes 2D cross-correlation ("convolution"): {@code out = conv2d(input, weight) + bias},
+     * NCHW layout. Forces {@code input}/{@code weight}/{@code bias} contiguous before dispatch.
+     */
+    public static Storage conv2d(Tensor input, Tensor weight, Tensor bias,
+                                 int stride, int padding, Shape resultShape) {
+        if (!input.isContiguous()) input = input.contiguous();
+        if (!weight.isContiguous()) weight = weight.contiguous();
+        if (!bias.isContiguous()) bias = bias.contiguous();
+
+        int[] inDims = input.getShape().dims();
+        int[] wDims = weight.getShape().dims();
+        int n = inDims[0], cin = inDims[1], h = inDims[2], w = inDims[3];
+        int cout = wDims[0], kh = wDims[2], kw = wDims[3];
+        int outH = resultShape.dim(2), outW = resultShape.dim(3);
+
+        Storage out = alloc(input, resultShape.numel());
+        f32(input).conv2d(input.getStorage(), input.getOffset(), n, cin, h, w,
+                weight.getStorage(), weight.getOffset(), cout, kh, kw,
+                bias.getStorage(), bias.getOffset(),
+                out, 0, outH, outW,
+                stride, padding);
         return out;
     }
 }

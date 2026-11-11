@@ -21,10 +21,16 @@ public class SubFn extends TensorFunction {
         return applyBinary(SUB, SubFn::new, a, b);
     }
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public SubFn(Tensor a, Tensor b) {
         super(a, b);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         Tensor negGrad = gradOutput.mul(-1);

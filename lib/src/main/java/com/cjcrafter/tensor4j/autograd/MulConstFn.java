@@ -22,11 +22,17 @@ public class MulConstFn extends TensorFunction {
 
     private final float b;
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public MulConstFn(Tensor a, float b) {
         super(a);
         this.b = b;
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         return new Tensor[]{

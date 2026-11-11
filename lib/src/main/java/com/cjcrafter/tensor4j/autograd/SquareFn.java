@@ -23,10 +23,16 @@ public class SquareFn extends TensorFunction {
         return Tensor.wrapResult(out, a.getShape(), new SquareFn(a));
     }
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public SquareFn(Tensor a) {
         super(a);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         return new Tensor[]{

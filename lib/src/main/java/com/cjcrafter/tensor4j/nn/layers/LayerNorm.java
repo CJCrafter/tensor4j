@@ -1,6 +1,7 @@
 package com.cjcrafter.tensor4j.nn.layers;
 
 import com.cjcrafter.tensor4j.Tensor;
+import com.google.common.base.Preconditions;
 import com.cjcrafter.tensor4j.TensorBuilder;
 
 /**
@@ -18,6 +19,7 @@ public class LayerNorm extends Module {
     /**
      * Creates a layer norm over a last dimension of size {@code featureSize}, using a
      * default epsilon of {@code 1e-5} for numerical stability.
+     * @param featureSize the expected size of the last dimension
      */
     public LayerNorm(int featureSize) {
         this(featureSize, 1e-5f);
@@ -39,10 +41,8 @@ public class LayerNorm extends Module {
     @Override
     public Tensor forward(Tensor input) {
         int lastDim = input.getShape().dimensions() - 1;
-        if (input.getShape().dim(lastDim) != featureSize)
-            throw new IllegalArgumentException(
-                    "LayerNorm expected last dim " + featureSize
-                            + ", got shape " + input.getShape());
+        Preconditions.checkArgument(input.getShape().dim(lastDim) == featureSize,
+                "LayerNorm expected last dim %s, got shape %s", featureSize, input.getShape());
 
         float invN = 1f / featureSize;
         Tensor mean = input.sum(lastDim).mul(invN);

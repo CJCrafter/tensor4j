@@ -5,6 +5,8 @@ import com.cjcrafter.tensor4j.Tensor4j;
 import com.cjcrafter.tensor4j.TensorBuilder;
 import com.cjcrafter.tensor4j.backend.Backends;
 
+import com.google.common.base.Preconditions;
+
 import java.util.Collection;
 import java.util.IdentityHashMap;
 import java.util.Map;
@@ -30,7 +32,7 @@ public class Adam implements Optimizer {
     public static final float DEFAULT_EPS = 1e-8f;
 
     private final Collection<Tensor> params;
-    private final float lr;
+    private float lr;
     private final float beta1;
     private final float beta2;
     private final float eps;
@@ -42,6 +44,8 @@ public class Adam implements Optimizer {
 
     /**
      * Creates an Adam optimizer over {@code params} with the default betas and epsilon.
+     * @param params the parameters to update
+     * @param lr the learning rate
      */
     public Adam(Collection<Tensor> params, float lr) {
         this(params, lr, DEFAULT_BETA1, DEFAULT_BETA2, DEFAULT_EPS);
@@ -66,8 +70,8 @@ public class Adam implements Optimizer {
 
     @Override
     public void step() {
-        if (Tensor4j.isGradEnabled())
-            throw new IllegalStateException("Cannot step while grad is enabled... see Tensor4j.noGrad()");
+        Preconditions.checkState(!Tensor4j.isGradEnabled(),
+                "Cannot step while grad is enabled... see Tensor4j.noGrad()");
 
         t++;
         final float biasCorr1 = 1f - (float) Math.pow(beta1, t);
@@ -93,6 +97,11 @@ public class Adam implements Optimizer {
                     biasCorr1, biasCorr2,
                     0f, eps);
         }
+    }
+
+    @Override
+    public void setLearningRate(float lr) {
+        this.lr = lr;
     }
 
     @Override

@@ -17,10 +17,16 @@ public class TransposeFn extends TensorFunction {
                 a.getOffset(), new TransposeFn(a));
     }
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public TransposeFn(Tensor input) {
         super(input);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         return new Tensor[] {

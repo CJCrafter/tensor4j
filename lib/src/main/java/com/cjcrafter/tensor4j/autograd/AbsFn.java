@@ -20,10 +20,16 @@ public class AbsFn extends TensorFunction {
         return applyUnary(ABS, AbsFn::new, a);
     }
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public AbsFn(Tensor a) {
         super(a);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         // sign(x): 1 for x > 0, -1 for x < 0, 0 for x == 0

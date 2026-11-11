@@ -33,12 +33,18 @@ public class MaxDimFn extends TensorFunction {
     private final Tensor result;
     private final int dim;
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public MaxDimFn(Tensor input, Tensor result, int dim) {
         super(input);
         this.result = result;
         this.dim = dim;
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         Tensor input = inputs[0];

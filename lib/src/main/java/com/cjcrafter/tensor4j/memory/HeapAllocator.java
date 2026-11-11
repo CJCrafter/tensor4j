@@ -12,6 +12,8 @@ public final class HeapAllocator implements Allocator {
 
     /**
      * Returns the shared singleton instance.
+     *
+     * @return the shared instance
      */
     public static HeapAllocator instance() {
         return INSTANCE;

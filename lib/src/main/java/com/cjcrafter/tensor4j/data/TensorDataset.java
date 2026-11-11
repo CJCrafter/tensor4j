@@ -1,6 +1,7 @@
 package com.cjcrafter.tensor4j.data;
 
 import com.cjcrafter.tensor4j.Tensor;
+import com.google.common.base.Preconditions;
 
 /**
  * A <i>small</i> fixed-size dataset made up of tensors preloaded into memory.
@@ -17,13 +18,13 @@ public class TensorDataset implements Dataset {
      *                training data, one for labels).
      */
     public TensorDataset(Tensor... tensors) {
-        if (tensors.length == 0)
-            throw new IllegalArgumentException("at least one tensor required");
+        Preconditions.checkArgument(tensors.length > 0, "at least one tensor required");
 
         this.size = tensors[0].getShape().dim(0);
         for (Tensor t : tensors) {
-            if (t.getShape().dim(0) != size)
-                throw new IllegalArgumentException("all tensors must have the same size in dimension 0");
+            Preconditions.checkArgument(t.getShape().dim(0) == size,
+                    "all tensors must have the same size in dimension 0, got %s and %s",
+                    size, t.getShape().dim(0));
         }
 
         // Prevent people from modifying the array, just as a sanity check

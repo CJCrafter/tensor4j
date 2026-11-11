@@ -23,11 +23,17 @@ public class ExpFn extends TensorFunction {
     // cache this to avoid recomputations
     private final Tensor result;
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public ExpFn(Tensor a, Tensor result) {
         super(a);
         this.result = result;
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         return new Tensor[] {

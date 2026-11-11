@@ -20,11 +20,17 @@ public class ViewFn extends TensorFunction {
 
     private final Shape sourceShape;
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public ViewFn(Tensor input) {
         super(input);
         this.sourceShape = input.getShape();
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         return new Tensor[] {

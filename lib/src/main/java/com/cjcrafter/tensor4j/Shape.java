@@ -31,8 +31,9 @@ public final class Shape {
      * @param strides The stride of each dimension; must be the same length as {@code dims}.
      */
     public Shape(int[] dims, int[] strides) {
-        if (dims.length < 2) throw new IllegalArgumentException("tensors must be at least 2D, got " + dims.length + "D");
-        if (dims.length != strides.length) throw new IllegalArgumentException("dims.length must equal strides.length");
+        Preconditions.checkArgument(dims.length >= 2, "tensors must be at least 2D, got %sD", dims.length);
+        Preconditions.checkArgument(dims.length == strides.length,
+                "dims length %s must equal strides length %s", dims.length, strides.length);
 
         this.dims = dims;
         this.strides = strides;
@@ -85,6 +86,8 @@ public final class Shape {
      * Swaps the last two dimensions (matrix transpose). For a 2D shape this
      * is the conventional transpose; for batched ND shapes the batch dims
      * are preserved and only the last two are swapped.
+     *
+     * @return the resulting shape
      */
     public Shape transpose() {
         int n = dims.length;
@@ -102,6 +105,7 @@ public final class Shape {
      * Reverses the order of all dimensions. Used by readers of column-major
      * (Fortran-order) data to reinterpret it as row-major. For 2D this is
      * equivalent to {@link #transpose()}.
+     * @return the resulting shape
      */
     @ApiStatus.Internal
     public Shape reverseDims() {
@@ -117,6 +121,9 @@ public final class Shape {
 
     /**
      * Size along dimension i.
+     *
+     * @param i the index along the first dimension
+     * @return the computed value
      */
     public int dim(int i) {
         return dims[i];
@@ -124,6 +131,8 @@ public final class Shape {
 
     /**
      * Copy of the dims array.
+     *
+     * @return the computed indices
      */
     public int[] dims() {
         return dims.clone();
@@ -131,6 +140,8 @@ public final class Shape {
 
     /**
      * Copy of the strides array.
+     *
+     * @return the computed indices
      */
     public int[] strides() {
         return strides.clone();
@@ -138,6 +149,9 @@ public final class Shape {
 
     /**
      * Convert n-dimensional indices to a flat offset into the backing array.
+     *
+     * @param indices the indices to select
+     * @return the computed value
      */
     public int flatIndex(int... indices) {
         int offset = 0;
@@ -150,6 +164,8 @@ public final class Shape {
     /**
      * True if the data is laid out contiguously in row-major order.
      * This determines whether SIMD bulk operations can be used directly.
+     *
+     * @return the computed value
      */
     public boolean isContiguous() {
         int expected = 1;
@@ -163,17 +179,19 @@ public final class Shape {
     /**
      * Reshape to new dimensions. One dimension may be -1 to infer its size
      * from the total element count.
+     *
+     * @param newDims the new shape; one dimension may be -1 to infer its size
+     * @return the resulting shape
      */
     public Shape reshape(int... newDims) {
-        if (!isContiguous())
-            throw new IllegalStateException("cannot reshape a non-contiguous view; make it contiguous first");
+        Preconditions.checkState(isContiguous(),
+                "cannot reshape a non-contiguous view; make it contiguous first");
 
         int inferIdx = -1;
         int known = 1;
         for (int i = 0; i < newDims.length; i++) {
             if (newDims[i] == -1) {
-                if (inferIdx != -1)
-                    throw new IllegalArgumentException("only one dimension can be -1");
+                Preconditions.checkArgument(inferIdx == -1, "only one dimension can be -1, got %s", Arrays.toString(newDims));
                 inferIdx = i;
             } else {
                 known *= newDims[i];
@@ -189,8 +207,8 @@ public final class Shape {
         int total = 1;
         for (int d : resolved)
             total *= d;
-        if (total != numel())
-            throw new IllegalArgumentException("cannot reshape " + numel() + " elements into " + java.util.Arrays.toString(resolved));
+        Preconditions.checkArgument(total == numel(),
+                "cannot reshape %s elements into %s", numel(), Arrays.toString(resolved));
 
         return new Shape(resolved);
     }
@@ -208,6 +226,7 @@ public final class Shape {
      * </pre>
      *
      * @return the broadcast result shape, or null if incompatible.
+     * @param other the other shape to broadcast with
      */
     public Shape broadcastWith(Shape other) {
         int maxNdim = Math.max(this.dimensions(), other.dimensions());
@@ -234,6 +253,9 @@ public final class Shape {
      * Returns strides for broadcasting this shape into the target shape.
      * Dimensions being broadcast (size 1 -> size n) get stride 0, so the
      * same element is repeated without copying data.
+     *
+     * @param target the target values to compare against
+     * @return the computed indices
      */
     public int[] broadcastStridesTo(Shape target) {
         int[] result = new int[target.dimensions()];

@@ -11,6 +11,7 @@ public class Softmax extends Module {
 
     /**
      * Creates a softmax layer normalizing along {@code dim}.
+     * @param dim the dimension to operate along
      */
     public Softmax(int dim) {
         this.dim = dim;

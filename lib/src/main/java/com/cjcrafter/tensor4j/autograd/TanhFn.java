@@ -22,11 +22,17 @@ public class TanhFn extends TensorFunction {
 
     private final Tensor result;
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public TanhFn(Tensor input, Tensor result) {
         super(input);
         this.result = result;
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         Tensor tanh2 = result.square().rsub_(1);

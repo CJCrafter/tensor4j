@@ -20,6 +20,8 @@ public final class Device {
 
     /**
      * Returns the {@link DeviceKind} family this device belongs to.
+     *
+     * @return the device family
      */
     public DeviceKind kind() {
         return kind;
@@ -27,6 +29,7 @@ public final class Device {
 
     /**
      * Returns the index of this device within its {@link DeviceKind} (e.g. GPU 0 vs GPU 1).
+     * @return the computed value
      */
     public int ordinal() {
         return ordinal;
@@ -34,6 +37,7 @@ public final class Device {
 
     /**
      * Returns {@code true} if this device is the CPU.
+     * @return the computed value
      */
     public boolean isCpu() {
         return kind == DeviceKind.CPU;
@@ -58,6 +62,8 @@ public final class Device {
 
     /**
      * Returns the singleton CPU device.
+     *
+     * @return the device
      */
     public static Device cpu() {
         return CPU;

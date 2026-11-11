@@ -26,11 +26,17 @@ public class SumDimFn extends TensorFunction {
 
     private final int dim;
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public SumDimFn(Tensor input, int dim) {
         super(input);
         this.dim = dim;
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         // gradOutput has shape with dim collapsed to 1.

@@ -22,11 +22,17 @@ public class DivRConstFn extends TensorFunction {
 
     private final float a;
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public DivRConstFn(float a, Tensor b) {
         super(b);
         this.a = a;
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         return new Tensor[]{

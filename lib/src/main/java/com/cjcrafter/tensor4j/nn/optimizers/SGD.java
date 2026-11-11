@@ -3,6 +3,8 @@ package com.cjcrafter.tensor4j.nn.optimizers;
 import com.cjcrafter.tensor4j.Tensor;
 import com.cjcrafter.tensor4j.Tensor4j;
 
+import com.google.common.base.Preconditions;
+
 import java.util.Collection;
 
 /**
@@ -11,10 +13,12 @@ import java.util.Collection;
 public class SGD implements Optimizer {
 
     private final Collection<Tensor> params;
-    private final float lr;
+    private float lr;
 
     /**
      * Creates an SGD optimizer over {@code params} with learning rate {@code lr}.
+     * @param params the parameters to update
+     * @param lr the learning rate
      */
     public SGD(Collection<Tensor> params, float lr) {
         this.params = params;
@@ -23,8 +27,8 @@ public class SGD implements Optimizer {
 
     @Override
     public void step() {
-        if (Tensor4j.isGradEnabled())
-            throw new IllegalStateException("Cannot step while grad is enabled... see Tensor4j.noGrad()");
+        Preconditions.checkState(!Tensor4j.isGradEnabled(),
+                "Cannot step while grad is enabled... see Tensor4j.noGrad()");
 
         for (Tensor param : params) {
             Tensor grad = param.getGrad();
@@ -34,6 +38,11 @@ public class SGD implements Optimizer {
             grad.mul_(lr);
             param.sub_(grad);
         }
+    }
+
+    @Override
+    public void setLearningRate(float lr) {
+        this.lr = lr;
     }
 
     @Override

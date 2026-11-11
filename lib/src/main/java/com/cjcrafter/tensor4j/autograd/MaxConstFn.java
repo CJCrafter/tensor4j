@@ -24,11 +24,17 @@ public class MaxConstFn extends TensorFunction {
 
     private final float b;
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public MaxConstFn(Tensor input, float b) {
         super(input);
         this.b = b;
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         Tensor input = inputs[0];

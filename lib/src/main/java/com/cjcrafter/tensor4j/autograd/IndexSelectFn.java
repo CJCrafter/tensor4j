@@ -21,6 +21,9 @@ public class IndexSelectFn extends TensorFunction {
         this.indices = indices;
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         Tensor input = inputs[0];

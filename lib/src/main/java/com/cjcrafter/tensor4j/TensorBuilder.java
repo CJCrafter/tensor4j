@@ -19,7 +19,12 @@ public final class TensorBuilder {
     TensorBuilder() {
     }
 
-    /** Overrides the default {@link HeapAllocator} for this build. */
+    /**
+     * Overrides the default {@link HeapAllocator} for this build.
+     *
+     * @param allocator the allocator that owns the resulting tensor's storage
+     * @return this builder, for chaining
+     */
     public TensorBuilder allocator(Allocator allocator) {
         this.allocator = Preconditions.checkNotNull(allocator, "allocator");
         return this;
@@ -122,10 +127,9 @@ public final class TensorBuilder {
      * @throws IllegalStateException If the shape was not set yet.
      */
     public Tensor fromArray(float... data) {
-        if (shape == null)
-            throw new IllegalStateException("shape was null, set that first");
-        if (data.length != shape.numel())
-            throw new IllegalArgumentException("data did not match shape " + shape);
+        Preconditions.checkState(shape != null, "shape was null, set that first");
+        Preconditions.checkArgument(data.length == shape.numel(),
+                "data length %s does not match shape %s", data.length, shape);
 
         Storage s = allocator.allocate(DType.F32, data.length);
         System.arraycopy(data, 0, s.array(), 0, data.length);

@@ -1,10 +1,6 @@
 package com.cjcrafter.tensor4j.nn.losses;
 
-import com.cjcrafter.tensor4j.Shape;
 import com.cjcrafter.tensor4j.Tensor;
-import com.cjcrafter.tensor4j.TensorBuilder;
-
-import java.util.Arrays;
 
 /**
  * A criterion combining log-softmax and negative log-likelihood, matching PyTorch's
@@ -34,6 +30,8 @@ public record CrossEntropyLoss(Reduction reduction, int dim) implements Loss {
 
     /**
      * Creates a cross-entropy loss over the last dimension.
+     *
+     * @param reduction how to reduce the per-element loss
      */
     public CrossEntropyLoss(Reduction reduction) {
         this(reduction, -1);
@@ -47,30 +45,10 @@ public record CrossEntropyLoss(Reduction reduction, int dim) implements Loss {
         int resolvedDim = (dim >= 0) ? dim : input.getShape().dimensions() + dim;
         Tensor logProbs = input.logSoftmax(resolvedDim);
 
-        Tensor targetProbs = target.getShape().equals(input.getShape())
-                ? target
-                : oneHot(target, input.getShape(), resolvedDim);
+        Tensor perEntry = target.getShape().equals(input.getShape())
+                ? target.mul(logProbs).sum(resolvedDim).mul(-1f)
+                : logProbs.gather(resolvedDim, target).mul(-1f);
 
-        Tensor perEntry = targetProbs.mul(logProbs).sum(resolvedDim).mul(-1f);
         return reduction.reduce(perEntry);
-    }
-
-    /**
-     * Expands {@code classIndices} (shaped like {@code inputShape} with {@code dim}
-     * collapsed to 1) into a one-hot mask shaped {@code inputShape}.
-     */
-    private static Tensor oneHot(Tensor classIndices, Shape inputShape, int dim) {
-        int numClasses = inputShape.dim(dim);
-
-        int[] rangeDims = new int[inputShape.dimensions()];
-        Arrays.fill(rangeDims, 1);
-        rangeDims[dim] = numClasses;
-
-        float[] range = new float[numClasses];
-        for (int i = 0; i < numClasses; i++)
-            range[i] = i;
-
-        Tensor classRange = TensorBuilder.builder().shape(rangeDims).fromArray(range);
-        return classRange.eq(classIndices);
     }
 }

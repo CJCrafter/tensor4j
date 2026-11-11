@@ -10,6 +10,7 @@ public class SequentialSampler implements Sampler {
 
     /**
      * Creates a sampler over {@code size} total samples.
+     * @param size the total number of samples
      */
     public SequentialSampler(int size) {
         this.size = size;

@@ -4,6 +4,7 @@ import com.cjcrafter.tensor4j.Device;
 import com.cjcrafter.tensor4j.Shape;
 import com.cjcrafter.tensor4j.backend.F32KernelTable;
 import com.cjcrafter.tensor4j.memory.Storage;
+import com.google.common.base.Preconditions;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
@@ -60,7 +61,7 @@ public final class CpuF32Kernels implements F32KernelTable {
         else if (op == TANH) return (float) Math.tanh(a);
         else if (op == EXPM1) return (float) Math.expm1(a);
         else if (op == LOG1P) return (float) Math.log1p(a);
-        else throw new UnsupportedOperationException("unary op: " + op.name());
+        else { Preconditions.checkArgument(false, "unsupported unary op: %s", op); return 0f; }
     }
 
     private static float applyScalarBinary(VectorOperators.Binary op, float a, float b) {
@@ -73,7 +74,7 @@ public final class CpuF32Kernels implements F32KernelTable {
         else if (op == ATAN2) return (float) Math.atan2(a, b);
         else if (op == POW) return (float) Math.pow(a, b);
         else if (op == HYPOT) return (float) Math.hypot(a, b);
-        else throw new UnsupportedOperationException("binary op: " + op.name());
+        else { Preconditions.checkArgument(false, "unsupported binary op: %s", op); return 0f; }
     }
 
     private static float applyScalarComparison(VectorOperators.Comparison op, float a, float b) {
@@ -83,7 +84,7 @@ public final class CpuF32Kernels implements F32KernelTable {
         else if (op == LE) return a <= b ? 1f : 0f;
         else if (op == GT) return a > b ? 1f : 0f;
         else if (op == GE) return a >= b ? 1f : 0f;
-        else throw new UnsupportedOperationException("comparison op: " + op.name());
+        else { Preconditions.checkArgument(false, "unsupported comparison op: %s", op); return 0f; }
     }
 
     // -------------- //
@@ -840,6 +841,163 @@ public final class CpuF32Kernels implements F32KernelTable {
             var vb = FloatVector.fromArray(SPECIES, b, bOff + i, mask);
             var vc = FloatVector.fromArray(SPECIES, c, cOff + i, mask);
             va.lanewise(op, vb, vc).intoArray(out, outOff + i, mask);
+        }
+    }
+
+    // -------------------------- //
+    // --- SPATIAL (NCHW) OPS --- //
+    // -------------------------- //
+
+    @Override
+    public void conv2d(Storage inputS, int inOff, int n, int cin, int h, int w,
+                       Storage weightS, int weightOff, int cout, int kh, int kw,
+                       Storage biasS, int biasOff,
+                       Storage outS, int outOff, int outH, int outW,
+                       int stride, int padding) {
+        float[] input = arr(inputS);
+        float[] weight = arr(weightS);
+        float[] bias = arr(biasS);
+        float[] out = arr(outS);
+
+        for (int ni = 0; ni < n; ni++) {
+            for (int co = 0; co < cout; co++) {
+                float b = bias[biasOff + co];
+                for (int oh = 0; oh < outH; oh++) {
+                    for (int ow = 0; ow < outW; ow++) {
+                        float sum = b;
+                        for (int c = 0; c < cin; c++) {
+                            int inBaseC = inOff + (ni * cin + c) * h * w;
+                            int wBaseC = weightOff + (co * cin + c) * kh * kw;
+                            for (int khi = 0; khi < kh; khi++) {
+                                int ih = oh * stride - padding + khi;
+                                if (ih < 0 || ih >= h) continue;
+                                int inRow = inBaseC + ih * w;
+                                int wRow = wBaseC + khi * kw;
+                                for (int kwi = 0; kwi < kw; kwi++) {
+                                    int iw = ow * stride - padding + kwi;
+                                    if (iw < 0 || iw >= w) continue;
+                                    sum += input[inRow + iw] * weight[wRow + kwi];
+                                }
+                            }
+                        }
+                        out[outOff + ((ni * cout + co) * outH + oh) * outW + ow] = sum;
+                    }
+                }
+            }
+        }
+    }
+
+    @Override
+    public void conv2dBackward(Storage inputS, int inOff, int n, int cin, int h, int w,
+                               Storage weightS, int weightOff, int cout, int kh, int kw,
+                               Storage gradOutputS, int gradOutOff, int outH, int outW,
+                               Storage gradInputS, int gradInOff,
+                               Storage gradWeightS, int gradWeightOff,
+                               Storage gradBiasS, int gradBiasOff,
+                               int stride, int padding) {
+        float[] input = arr(inputS);
+        float[] weight = arr(weightS);
+        float[] gradOutput = arr(gradOutputS);
+        float[] gradInput = arr(gradInputS);
+        float[] gradWeight = arr(gradWeightS);
+        float[] gradBias = arr(gradBiasS);
+
+        for (int ni = 0; ni < n; ni++) {
+            for (int co = 0; co < cout; co++) {
+                for (int oh = 0; oh < outH; oh++) {
+                    for (int ow = 0; ow < outW; ow++) {
+                        float go = gradOutput[gradOutOff + ((ni * cout + co) * outH + oh) * outW + ow];
+                        gradBias[gradBiasOff + co] += go;
+
+                        for (int c = 0; c < cin; c++) {
+                            int inBaseC = inOff + (ni * cin + c) * h * w;
+                            int gInBaseC = gradInOff + (ni * cin + c) * h * w;
+                            int wBaseC = weightOff + (co * cin + c) * kh * kw;
+                            int gWBaseC = gradWeightOff + (co * cin + c) * kh * kw;
+                            for (int khi = 0; khi < kh; khi++) {
+                                int ih = oh * stride - padding + khi;
+                                if (ih < 0 || ih >= h) continue;
+                                int inRow = inBaseC + ih * w;
+                                int gInRow = gInBaseC + ih * w;
+                                int wRow = wBaseC + khi * kw;
+                                int gWRow = gWBaseC + khi * kw;
+                                for (int kwi = 0; kwi < kw; kwi++) {
+                                    int iw = ow * stride - padding + kwi;
+                                    if (iw < 0 || iw >= w) continue;
+                                    gradInput[gInRow + iw] += go * weight[wRow + kwi];
+                                    gradWeight[gWRow + kwi] += go * input[inRow + iw];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Override
+    public void maxPool2d(Storage inputS, int inOff, int n, int c, int h, int w,
+                          Storage outS, int outOff, Storage argmaxS, int argmaxOff,
+                          int outH, int outW, int kernelSize, int stride) {
+        float[] input = arr(inputS);
+        float[] out = arr(outS);
+        float[] argmax = arr(argmaxS);
+
+        for (int ni = 0; ni < n; ni++) {
+            for (int ci = 0; ci < c; ci++) {
+                int inBaseC = inOff + (ni * c + ci) * h * w;
+                for (int oh = 0; oh < outH; oh++) {
+                    for (int ow = 0; ow < outW; ow++) {
+                        float best = Float.NEGATIVE_INFINITY;
+                        int bestIdx = 0;
+                        for (int khi = 0; khi < kernelSize; khi++) {
+                            int ih = oh * stride + khi;
+                            if (ih >= h) continue;
+                            int inRow = inBaseC + ih * w;
+                            for (int kwi = 0; kwi < kernelSize; kwi++) {
+                                int iw = ow * stride + kwi;
+                                if (iw >= w) continue;
+                                float v = input[inRow + iw];
+                                if (v > best) {
+                                    best = v;
+                                    bestIdx = khi * kernelSize + kwi;
+                                }
+                            }
+                        }
+                        int outIdx = ((ni * c + ci) * outH + oh) * outW + ow;
+                        out[outOff + outIdx] = best;
+                        argmax[argmaxOff + outIdx] = bestIdx;
+                    }
+                }
+            }
+        }
+    }
+
+    @Override
+    public void maxPool2dBackward(Storage gradOutputS, int gradOutOff, Storage argmaxS, int argmaxOff,
+                                  int n, int c, int outH, int outW,
+                                  Storage gradInputS, int gradInOff, int h, int w,
+                                  int kernelSize, int stride) {
+        float[] gradOutput = arr(gradOutputS);
+        float[] argmax = arr(argmaxS);
+        float[] gradInput = arr(gradInputS);
+
+        for (int ni = 0; ni < n; ni++) {
+            for (int ci = 0; ci < c; ci++) {
+                int inBaseC = gradInOff + (ni * c + ci) * h * w;
+                for (int oh = 0; oh < outH; oh++) {
+                    for (int ow = 0; ow < outW; ow++) {
+                        int outIdx = ((ni * c + ci) * outH + oh) * outW + ow;
+                        float go = gradOutput[gradOutOff + outIdx];
+                        int windowIdx = (int) argmax[argmaxOff + outIdx];
+                        int khi = windowIdx / kernelSize;
+                        int kwi = windowIdx % kernelSize;
+                        int ih = oh * stride + khi;
+                        int iw = ow * stride + kwi;
+                        gradInput[inBaseC + ih * w + iw] += go;
+                    }
+                }
+            }
         }
     }
 

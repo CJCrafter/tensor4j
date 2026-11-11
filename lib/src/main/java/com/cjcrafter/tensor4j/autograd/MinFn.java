@@ -25,10 +25,16 @@ public class MinFn extends TensorFunction {
         return applyBinary(MIN, MinFn::new, a, b);
     }
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public MinFn(Tensor a, Tensor b) {
         super(a, b);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         Tensor maskA = inputs[0].le(inputs[1]);

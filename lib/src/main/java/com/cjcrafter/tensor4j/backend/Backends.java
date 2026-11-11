@@ -13,12 +13,13 @@ public final class Backends {
 
     /**
      * Returns the backend that owns compute and allocation for the given device.
+     *
+     * @param device the device to use
+     * @return the backend
      */
     public static Backend forDevice(Device device) {
         Preconditions.checkNotNull(device, "device");
-        if (device.isCpu()) {
-            return CpuBackend.instance();
-        }
-        throw new UnsupportedOperationException("no backend registered for " + device);
+        Preconditions.checkArgument(device.isCpu(), "no backend registered for %s", device);
+        return CpuBackend.instance();
     }
 }

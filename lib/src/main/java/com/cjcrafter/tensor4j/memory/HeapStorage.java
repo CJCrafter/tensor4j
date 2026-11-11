@@ -14,6 +14,9 @@ public final class HeapStorage extends Storage {
 
     /**
      * Wraps an existing array as storage; the array is used directly, not copied.
+     *
+     * @param data the values, in row-major order
+     * @param dtype the element type
      */
     public HeapStorage(float[] data, DType dtype) {
         this.data = Preconditions.checkNotNull(data, "data");
@@ -22,6 +25,9 @@ public final class HeapStorage extends Storage {
 
     /**
      * Allocates a new zero-filled storage block of {@code numElements} elements.
+     * @param dtype the element type
+     * @param numElements the number of elements to allocate
+     * @return a new storage block
      */
     public static HeapStorage allocate(DType dtype, int numElements) {
         Preconditions.checkNotNull(dtype, "dtype");

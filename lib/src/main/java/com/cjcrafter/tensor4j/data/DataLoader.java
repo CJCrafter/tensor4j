@@ -25,6 +25,10 @@ public record DataLoader(
 
     /**
      * Creates a loader that keeps the final undersized batch of each epoch.
+     *
+     * @param dataset the dataset to draw samples from
+     * @param batchSize the number of samples per batch
+     * @param sampler the sampler that chooses each batch's indices
      */
     public DataLoader(Dataset dataset, int batchSize, Sampler sampler) {
         this(dataset, batchSize, sampler, false);

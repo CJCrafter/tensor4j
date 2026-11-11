@@ -23,6 +23,9 @@ public class CatFn extends TensorFunction {
         this.sizesAlongDim = sizesAlongDim;
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         if (!gradOutput.isContiguous())

@@ -28,10 +28,16 @@ public class AddConstFn extends TensorFunction {
         return applyBinaryConst(SUB, t -> new AddConstFn(t, b), a, b);
     }
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public AddConstFn(Tensor a, float b) {
         super(a);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         return new Tensor[]{

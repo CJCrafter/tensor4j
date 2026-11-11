@@ -55,12 +55,9 @@ public class MatmulFn extends TensorFunction {
         for (int i = 0; i < n; i++) {
             int da = i < aBatch.length ? aBatch[aBatch.length - 1 - i] : 1;
             int db = i < bBatch.length ? bBatch[bBatch.length - 1 - i] : 1;
-            int rd;
-            if (da == db) rd = da;
-            else if (da == 1) rd = db;
-            else if (db == 1) rd = da;
-            else throw new IllegalArgumentException(
-                    "matmul batch dims not broadcastable: " + aShape + " @ " + bShape);
+            Preconditions.checkArgument(da == db || da == 1 || db == 1,
+                    "matmul batch dims not broadcastable: %s @ %s", aShape, bShape);
+            int rd = (da == 1) ? db : da;
             result[n - 1 - i] = rd;
         }
         return result;
@@ -73,6 +70,9 @@ public class MatmulFn extends TensorFunction {
         super(a, b);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         Tensor a = inputs[0];

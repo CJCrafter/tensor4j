@@ -45,6 +45,11 @@ public class Tensor implements Cloneable {
      * Wrap an op result in a {@link Tensor} and attach {@code fn} as its gradFn
      * iff any input requires grad and grad tracking is enabled. The new tensor
      * is at offset 0.
+      *
+     * @param storage the storage that holds the result
+     * @param shape the shape of the result
+     * @param fn the backward function to record
+     * @return the resulting tensor
      */
     public static Tensor wrapResult(Storage storage, Shape shape, TensorFunction fn) {
         return wrapResult(storage, shape, 0, fn);
@@ -53,6 +58,12 @@ public class Tensor implements Cloneable {
     /**
      * Variant of {@link #wrapResult(Storage, Shape, TensorFunction)} that
      * allows a non-zero offset (for view-like ops that share storage).
+      *
+     * @param storage the storage that holds the result
+     * @param shape the shape of the result
+     * @param offset the offset of the first element in the storage
+     * @param fn the backward function to record
+     * @return the resulting tensor
      */
     public static Tensor wrapResult(Storage storage, Shape shape, int offset, TensorFunction fn) {
         boolean grad = false;
@@ -105,6 +116,10 @@ public class Tensor implements Cloneable {
 
     /**
      * Concatenates {@code tensors} along {@code dim}; all other dimensions must match.
+      *
+     * @param dim the dimension to operate along
+     * @param tensors the tensors to combine
+     * @return the resulting tensor
      */
     public static Tensor cat(int dim, Tensor... tensors) {
         Preconditions.checkArgument(tensors != null && tensors.length > 0,
@@ -162,6 +177,36 @@ public class Tensor implements Cloneable {
         return wrapResult(out, outShape, new CatFn(dim, sizesAlongDim, tensors));
     }
 
+    /**
+     * Stacks {@code tensors} (all the same shape) along a new dimension inserted at {@code dim}.
+     * Unlike {@link #cat(int, Tensor...)}, which joins tensors along an existing dimension,
+     * this adds a new one (e.g. stacking {@code N} boards of shape {@code (C, H, W)} at
+     * {@code dim=0} produces a batch of shape {@code (N, C, H, W)}).
+      *
+     * @param dim the dimension to operate along
+     * @param tensors the tensors to combine
+     * @return the resulting tensor
+     */
+    public static Tensor stack(int dim, Tensor... tensors) {
+        Preconditions.checkArgument(tensors != null && tensors.length > 0,
+                "stack requires at least one tensor");
+        int ndim = tensors[0].shape.dimensions();
+        Preconditions.checkArgument(dim >= 0 && dim <= ndim,
+                "dim %s out of range for stacking %sD tensors", dim, ndim);
+
+        Tensor[] expanded = new Tensor[tensors.length];
+        for (int i = 0; i < tensors.length; i++) {
+            Tensor t = tensors[i].isContiguous() ? tensors[i] : tensors[i].contiguous();
+            int[] dims = t.getShape().dims();
+            int[] newDims = new int[dims.length + 1];
+            System.arraycopy(dims, 0, newDims, 0, dim);
+            newDims[dim] = 1;
+            System.arraycopy(dims, dim, newDims, dim + 1, dims.length - dim);
+            expanded[i] = t.view(newDims);
+        }
+        return cat(dim, expanded);
+    }
+
     private AutogradMeta meta() {
         if (meta == null)
             meta = new AutogradMeta();
@@ -170,6 +215,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the {@link Storage} backing this tensor's elements.
+      *
+     * @return the resulting storage
      */
     public Storage getStorage() {
         return storage;
@@ -177,6 +224,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the element type of this tensor.
+     *
+     * @return the element type
      */
     public DType dtype() {
         return storage.dtype();
@@ -184,6 +233,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the device this tensor's data lives on.
+     *
+     * @return the device
      */
     public Device device() {
         return storage.device();
@@ -193,6 +244,8 @@ public class Tensor implements Cloneable {
      * Returns a fresh {@code float[]} containing this tensor's logical
      * elements in row-major order. Always copies; mutations to the returned
      * array do not affect the tensor.
+      *
+     * @return a copy of the values, in row-major order
      */
     public float[] toFloatArray() {
         Tensor src = isContiguous() ? this : contiguous();
@@ -212,6 +265,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns this tensor's shape.
+     *
+     * @return the resulting shape
      */
     public Shape getShape() {
         return shape;
@@ -219,6 +274,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns this tensor's element offset into its backing {@link Storage}.
+      *
+     * @return the computed value
      */
     public int getOffset() {
         return offset;
@@ -226,6 +283,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns {@code true} if operations on this tensor are tracked for {@link #backward()}.
+      *
+     * @return the computed value
      */
     public boolean requiresGrad() {
         return requiresGrad;
@@ -234,14 +293,27 @@ public class Tensor implements Cloneable {
     /**
      * Returns the accumulated gradient from the last {@link #backward()} call, or
      * {@code null} if none has been computed (or this tensor is unreachable from the loss).
+      *
+     * @return the resulting tensor
      */
     public Tensor getGrad() {
         return meta == null ? null : meta.grad;
     }
 
     /**
+     * Returns {@code true} if {@link #backward()} has produced a gradient for this tensor.
+      *
+     * @return the computed value
+     */
+    public boolean hasGrad() {
+        return getGrad() != null;
+    }
+
+    /**
      * Returns the {@link TensorFunction} that produced this tensor, or {@code null} if
      * this tensor is a leaf (e.g. built directly via {@link TensorBuilder}).
+      *
+     * @return the function that produced this tensor, or null for a leaf
      */
     public TensorFunction getGradFn() {
         return meta == null ? null : meta.gradFn;
@@ -260,23 +332,23 @@ public class Tensor implements Cloneable {
     }
 
     private void checkInPlaceSafe() {
-        if (this.requiresGrad && meta != null && meta.gradFn != null)
-            throw new IllegalStateException(
-                    "in-place operation on a tensor that is part of the computation graph");
-        if (offset != 0 || storage.capacity() != shape.numel() || !isContiguous())
-            throw new UnsupportedOperationException(
-                    "in-place operation not supported on views or non-contiguous tensors");
+        Preconditions.checkState(!(this.requiresGrad && meta != null && meta.gradFn != null),
+                "in-place operation on a tensor that is part of the computation graph");
+        Preconditions.checkState(offset == 0 && storage.capacity() == shape.numel() && isContiguous(),
+                "in-place operation not supported on views or non-contiguous tensors");
     }
 
     /**
      * Runs backpropagation from this (scalar) tensor, accumulating gradients into every
-     * ancestor tensor that {@link #requiresGrad()}.
+     * ancestor tensor that {@link #requiresGrad()}. The backward computation itself is not
+     * tracked by autograd (no double-backward/{@code create_graph} support), so it's safe to
+     * call this directly without wrapping it in {@link Tensor4j#noGrad()}.
      *
      * @throws IllegalStateException if this tensor is not a single-element tensor.
      */
     public void backward() {
-        if (shape.numel() != 1)
-            throw new IllegalStateException("backward() only supported on scalar tensors, got " + shape);
+        Preconditions.checkState(shape.numel() == 1,
+                "backward() only supported on scalar tensors, got %s", shape);
 
         // seed with dL/dL = 1
         Storage seedStorage = alloc(1);
@@ -289,27 +361,33 @@ public class Tensor implements Cloneable {
         Set<Tensor> visited = Collections.newSetFromMap(new IdentityHashMap<>());
         buildTopo(this, visited, topo);
 
-        for (int idx = topo.size() - 1; idx >= 0; idx--) {
-            Tensor node = topo.get(idx);
-            AutogradMeta nm = node.meta;
-            if (nm == null || nm.gradFn == null) continue;
-            if (nm.grad == null) continue; // unreachable from loss
+        // Backward computations themselves must not build a graph: this library has no
+        // double-backward (create_graph) support, and several Fn.backward() implementations
+        // use in-place ops on freshly-computed intermediates, which would otherwise throw
+        // once those intermediates pick up a gradFn of their own.
+        try (var ignored = Tensor4j.noGrad()) {
+            for (int idx = topo.size() - 1; idx >= 0; idx--) {
+                Tensor node = topo.get(idx);
+                AutogradMeta nm = node.meta;
+                if (nm == null || nm.gradFn == null) continue;
+                if (nm.grad == null) continue; // unreachable from loss
 
-            Tensor[] grads = nm.gradFn.backward(nm.grad);
-            Tensor[] inputs = nm.gradFn.getInputs();
-            for (int i = 0; i < inputs.length; i++) {
-                Tensor input = inputs[i];
-                if (!input.requiresGrad) continue;
+                Tensor[] grads = nm.gradFn.backward(nm.grad);
+                Tensor[] inputs = nm.gradFn.getInputs();
+                for (int i = 0; i < inputs.length; i++) {
+                    Tensor input = inputs[i];
+                    if (!input.requiresGrad) continue;
 
-                AutogradMeta im = input.meta();
-                if (im.grad == null) {
-                    // This is a little bit dangerous since the grad function
-                    // is responsible for cloning these tensors.
-                    im.grad = grads[i];
-                } else {
-                    // accumulate in-place, bypassing checkInPlaceSafe since
-                    // grad tensors are never part of the forward graph
-                    Ops.binaryOp(ADD, im.grad, grads[i], im.grad.shape, im.grad.storage);
+                    AutogradMeta im = input.meta();
+                    if (im.grad == null) {
+                        // This is a little bit dangerous since the grad function
+                        // is responsible for cloning these tensors.
+                        im.grad = grads[i];
+                    } else {
+                        // accumulate in-place, bypassing checkInPlaceSafe since
+                        // grad tensors are never part of the forward graph
+                        Ops.binaryOp(ADD, im.grad, grads[i], im.grad.shape, im.grad.storage);
+                    }
                 }
             }
         }
@@ -319,15 +397,19 @@ public class Tensor implements Cloneable {
      * Returns the value of this tensor as a plain {@code float}.
      *
      * @throws IllegalStateException if this tensor does not have exactly one element.
+     * @return the computed value
      */
     public float item() {
-        if (shape.numel() != 1)
-            throw new IllegalStateException("item() only valid on single-element tensors, got shape " + shape);
+        Preconditions.checkState(shape.numel() == 1,
+                "item() only valid on single-element tensors, got shape %s", shape);
         return read(offset);
     }
 
     /**
      * Returns the element at the given n-dimensional {@code indices}.
+      *
+     * @param indices the indices to select
+     * @return the computed value
      */
     public float get(int... indices) {
         return read(offset + shape.flatIndex(indices));
@@ -335,9 +417,14 @@ public class Tensor implements Cloneable {
 
     /**
      * Writes {@code val} to the element at the given n-dimensional {@code indices}.
+      *
+     * @param val the value to write
+     * @param indices the indices to select
+     * @return the resulting tensor
      */
-    public void set(float val, int... indices) {
+    public Tensor set(float val, int... indices) {
         write(offset + shape.flatIndex(indices), val);
+        return this;
     }
 
     // ----------------- //
@@ -346,6 +433,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns {@code true} if this tensor's data is laid out contiguously in row-major order.
+      *
+     * @return the computed value
      */
     public boolean isContiguous() {
         return shape.isContiguous();
@@ -354,13 +443,79 @@ public class Tensor implements Cloneable {
     /**
      * Swaps the last two dimensions of this tensor; tracked by autograd. Shares storage
      * with the original, so the result is typically not contiguous.
+     *
+     * @return the resulting tensor
      */
     public Tensor transpose() {
         return TransposeFn.apply(this);
     }
 
     /**
+     * Reorders the dimensions of this tensor so that output dimension {@code i} is input
+     * dimension {@code dims[i]}. Shares storage with this tensor, so the result is typically
+     * not contiguous. Tracked by autograd.
+      *
+     * @param dims the new order of the dimensions; output dimension i is input dimension dims[i]
+     * @return the resulting tensor
+     */
+    public Tensor permute(int... dims) {
+        return PermuteFn.apply(this, dims);
+    }
+
+    /**
+     * Flattens every dimension after the first into one, giving shape {@code (N, rest)}.
+      *
+     * @return the resulting tensor
+     */
+    public Tensor flatten() {
+        int[] dims = shape.dims();
+        return contiguousForView().view(dims[0], shape.numel() / dims[0]);
+    }
+
+    /**
+     * Removes a size-1 dimension at {@code dim}. The result must keep at least 2 dimensions.
+      *
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
+     */
+    public Tensor squeeze(int dim) {
+        Preconditions.checkArgument(dim >= 0 && dim < shape.dimensions(),
+                "dim %s out of range for %sD tensor", dim, shape.dimensions());
+        Preconditions.checkArgument(shape.dimensions() > 2,
+                "squeeze would leave fewer than 2 dimensions for shape %s", shape);
+        Preconditions.checkArgument(shape.dim(dim) == 1,
+                "squeeze dim %s has size %s, must be 1", dim, shape.dim(dim));
+        int[] newDims = new int[shape.dimensions() - 1];
+        for (int i = 0, j = 0; i < shape.dimensions(); i++)
+            if (i != dim) newDims[j++] = shape.dim(i);
+        return contiguousForView().view(newDims);
+    }
+
+    /**
+     * Inserts a size-1 dimension at {@code dim} (which may equal the current number of dimensions).
+      *
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
+     */
+    public Tensor unsqueeze(int dim) {
+        Preconditions.checkArgument(dim >= 0 && dim <= shape.dimensions(),
+                "dim %s out of range for unsqueezing a %sD tensor", dim, shape.dimensions());
+        int[] dims = shape.dims();
+        int[] newDims = new int[dims.length + 1];
+        System.arraycopy(dims, 0, newDims, 0, dim);
+        newDims[dim] = 1;
+        System.arraycopy(dims, dim, newDims, dim + 1, dims.length - dim);
+        return contiguousForView().view(newDims);
+    }
+
+    private Tensor contiguousForView() {
+        return isContiguous() ? this : contiguous();
+    }
+
+    /**
      * Reinterprets this tensor's dims in reverse order; not tracked by autograd.
+     *
+     * @return the resulting tensor
      */
     @ApiStatus.Internal
     public Tensor reverseDims() {
@@ -370,6 +525,9 @@ public class Tensor implements Cloneable {
     /**
      * Reshapes this tensor to {@code newDims} without copying data; one dimension may be
      * {@code -1} to infer its size. Requires this tensor to be contiguous.
+      *
+     * @param newDims the new shape; one dimension may be -1 to infer its size
+     * @return the resulting tensor
      */
     public Tensor view(int... newDims) {
         return ViewFn.apply(this, newDims);
@@ -377,6 +535,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns this tensor if it's already contiguous, otherwise a contiguous copy.
+     *
+     * @return the resulting tensor
      */
     public Tensor contiguous() {
         if (isContiguous())
@@ -414,6 +574,8 @@ public class Tensor implements Cloneable {
     /**
      * Returns a tensor sharing this tensor's storage but detached from the autograd graph
      * (i.e. {@link #requiresGrad()} is {@code false} and it has no grad function).
+      *
+     * @return the resulting tensor
      */
     public Tensor detach() {
         return new Tensor(storage, shape, offset, false);
@@ -421,6 +583,10 @@ public class Tensor implements Cloneable {
 
     /**
      * Selects the slices at {@code indices} along {@code dim} and stacks them into a new tensor.
+      *
+     * @param dim the dimension to operate along
+     * @param indices the indices to select
+     * @return the resulting tensor
      */
     public Tensor indexSelect(int dim, int... indices) {
         if (!isContiguous())
@@ -471,6 +637,9 @@ public class Tensor implements Cloneable {
      * Matrix-multiplies this tensor by {@code other}, with N-D batched broadcasting
      * (PyTorch semantics): the last two dims of each input are the matrix dims, and
      * everything before is a batch shape broadcast against the other input's.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor matmul(Tensor other) {
         return MatmulFn.apply(this, other);
@@ -482,6 +651,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns a {@code 1x1} tensor holding the sum of all elements.
+      *
+     * @return the resulting tensor
      */
     public Tensor sum() {
         float val = Ops.sum(this);
@@ -492,21 +663,60 @@ public class Tensor implements Cloneable {
 
     /**
      * Sums this tensor along {@code dim}, collapsing it to size 1.
+      *
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
      */
     public Tensor sum(int dim) {
         return SumDimFn.apply(this, dim);
     }
 
     /**
-     * Returns the maximum value along {@code dim}, collapsed to size 1.
+     * Returns the maximum along {@code dim}, collapsed to size 1 (values only; PyTorch's
+     * {@code torch.amax}).
+      *
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
      */
-    public Tensor max(int dim) {
+    public Tensor amax(int dim) {
         return MaxDimFn.apply(this, dim);
+    }
+
+    /**
+     * Returns the minimum along {@code dim}, collapsed to size 1 (values only; PyTorch's
+     * {@code torch.amin}).
+      *
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
+     */
+    public Tensor amin(int dim) {
+        return this.mul(-1f).amax(dim).mul(-1f);
+    }
+
+    /**
+     * Returns a {@code 1x1} tensor holding the maximum of all elements (PyTorch's {@code torch.max(x)}).
+      *
+     * @return the resulting tensor
+     */
+    public Tensor max() {
+        return flatten().amax(1).amax(0);
+    }
+
+    /**
+     * Returns a {@code 1x1} tensor holding the minimum of all elements (PyTorch's {@code torch.min(x)}).
+      *
+     * @return the resulting tensor
+     */
+    public Tensor min() {
+        return flatten().amin(1).amin(0);
     }
 
     /**
      * Returns the index of the maximum value along {@code dim}, collapsed to size 1.
      * Not tracked by autograd.
+      *
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
      */
     public Tensor argmax(int dim) {
         Preconditions.checkArgument(dim >= 0 && dim < shape.dimensions(),
@@ -518,12 +728,59 @@ public class Tensor implements Cloneable {
     }
 
     /**
+     * Returns the index of the minimum value along {@code dim}, collapsed to size 1.
+     * Not tracked by autograd.
+      *
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
+     */
+    public Tensor argmin(int dim) {
+        return this.detach().mul(-1f).argmax(dim);
+    }
+
+    /**
+     * Selects one element per "row" along {@code dim}. {@code indices} must have this
+     * tensor's shape with {@code dim} collapsed to size 1 (the same shape {@link #argmax(int)}
+     * returns), holding the index to read along {@code dim} as a float. Returns a tensor of
+     * that same collapsed shape. Differentiable with respect to this tensor.
+      *
+     * @param dim the dimension to operate along
+     * @param indices the indices to select
+     * @return the resulting tensor
+     */
+    public Tensor gather(int dim, Tensor indices) {
+        return oneHot(indices, shape, dim).mul(this).sum(dim);
+    }
+
+    /**
+     * Expands {@code classIndices} (shaped like {@code shape} with {@code dim} collapsed to
+     * 1) into a one-hot mask shaped {@code shape}. Not tracked by autograd.
+     */
+    static Tensor oneHot(Tensor classIndices, Shape shape, int dim) {
+        int numClasses = shape.dim(dim);
+
+        int[] rangeDims = new int[shape.dimensions()];
+        Arrays.fill(rangeDims, 1);
+        rangeDims[dim] = numClasses;
+
+        float[] range = new float[numClasses];
+        for (int i = 0; i < numClasses; i++)
+            range[i] = i;
+
+        Tensor classRange = TensorBuilder.builder().shape(rangeDims).fromArray(range);
+        return classRange.eq(classIndices);
+    }
+
+    /**
      * Returns {@code log(softmax(this, dim))}, computed in a numerically stable way.
+      *
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
      */
     public Tensor logSoftmax(int dim) {
         Preconditions.checkArgument(dim >= 0 && dim < shape.dimensions(),
                 "dim %s out of range for %sD tensor", dim, shape.dimensions());
-        Tensor maxes = this.max(dim);
+        Tensor maxes = this.amax(dim);
         Tensor shifted = this.sub(maxes);
         Tensor sumExp = shifted.exp().sum(dim);
         Tensor logSumExp = sumExp.log();
@@ -532,11 +789,14 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the softmax of this tensor along {@code dim}.
+      *
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
      */
     public Tensor softmax(int dim) {
         Preconditions.checkArgument(dim >= 0 && dim < shape.dimensions(),
                 "dim %s out of range for %sD tensor", dim, shape.dimensions());
-        Tensor shifted = this.sub(this.max(dim).detach());
+        Tensor shifted = this.sub(this.amax(dim).detach());
         Tensor expd = shifted.exp();
         return expd.div(expd.sum(dim));
     }
@@ -544,6 +804,10 @@ public class Tensor implements Cloneable {
     /**
      * Returns the softmax of this tensor along {@code dim}, after masking out positions
      * where {@code mask} is 0 (given a very large negative value before exponentiating).
+      *
+     * @param mask 1 where a position is allowed, 0 where it is masked out
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
      */
     public Tensor maskedSoftmax(Tensor mask, int dim) {
         // https://mcognetta.github.io/posts/masked_softmax/
@@ -554,7 +818,21 @@ public class Tensor implements Cloneable {
     }
 
     /**
+     * Returns the mean along {@code dim}, collapsed to size 1.
+      *
+     * @param dim the dimension to operate along
+     * @return the resulting tensor
+     */
+    public Tensor mean(int dim) {
+        Preconditions.checkArgument(dim >= 0 && dim < shape.dimensions(),
+                "dim %s out of range for %sD tensor", dim, shape.dimensions());
+        return sum(dim).mul(1f / shape.dim(dim));
+    }
+
+    /**
      * Returns a {@code 1x1} tensor holding the mean of all elements.
+      *
+     * @return the resulting tensor
      */
     public Tensor mean() {
         float val = Ops.mean(this);
@@ -569,6 +847,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise hyperbolic tangent of this tensor.
+     *
+     * @return the resulting tensor
      */
     public Tensor tanh() {
         return TanhFn.apply(this);
@@ -576,6 +856,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise absolute value of this tensor.
+     *
+     * @return the resulting tensor
      */
     public Tensor abs() {
         return AbsFn.apply(this);
@@ -583,6 +865,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise exponential ({@code e^x}) of this tensor.
+      *
+     * @return the resulting tensor
      */
     public Tensor exp() {
         return ExpFn.apply(this);
@@ -590,6 +874,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise natural logarithm of this tensor.
+     *
+     * @return the resulting tensor
      */
     public Tensor log() {
         return LogFn.apply(this);
@@ -597,6 +883,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise square root of this tensor.
+     *
+     * @return the resulting tensor
      */
     public Tensor sqrt() {
         return SqrtFn.apply(this);
@@ -604,6 +892,8 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise square of this tensor.
+     *
+     * @return the resulting tensor
      */
     public Tensor square() {
         return SquareFn.apply(this);
@@ -611,6 +901,8 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place elementwise absolute value; not usable on views or graph tensors.
+     *
+     * @return the resulting tensor
      */
     public Tensor abs_() {
         checkInPlaceSafe();
@@ -620,6 +912,8 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place elementwise exponential; not usable on views or graph tensors.
+     *
+     * @return the resulting tensor
      */
     public Tensor exp_() {
         checkInPlaceSafe();
@@ -629,6 +923,8 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place elementwise natural logarithm; not usable on views or graph tensors.
+     *
+     * @return the resulting tensor
      */
     public Tensor log_() {
         checkInPlaceSafe();
@@ -638,6 +934,8 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place elementwise square root; not usable on views or graph tensors.
+     *
+     * @return the resulting tensor
      */
     public Tensor sqrt_() {
         checkInPlaceSafe();
@@ -647,11 +945,35 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place elementwise square; not usable on views or graph tensors.
+     *
+     * @return the resulting tensor
      */
     public Tensor square_() {
         checkInPlaceSafe();
         Ops.binaryOp(MUL, this, this, shape, storage);
         return this;
+    }
+
+    /**
+     * Clamps every element to {@code [min, max]}.
+      *
+     * @param min the lower bound (inclusive)
+     * @param max the upper bound (inclusive)
+     * @return the resulting tensor
+     */
+    public Tensor clamp(float min, float max) {
+        return this.max(min).min(max);
+    }
+
+    /**
+     * In-place clamp of every element to {@code [min, max]}; not usable on views or graph tensors.
+      *
+     * @param min the lower bound (inclusive)
+     * @param max the upper bound (inclusive)
+     * @return the resulting tensor
+     */
+    public Tensor clamp_(float min, float max) {
+        return max_(min).min_(max);
     }
 
     // --------------------------- //
@@ -660,6 +982,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise sum of this tensor and {@code other}, broadcasting shapes as needed.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor add(Tensor other) {
         return AddFn.apply(this, other);
@@ -667,6 +992,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise difference {@code this - other}, broadcasting shapes as needed.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor sub(Tensor other) {
         return SubFn.apply(this, other);
@@ -674,6 +1002,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise product of this tensor and {@code other}, broadcasting shapes as needed.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor mul(Tensor other) {
         return MulFn.apply(this, other);
@@ -681,6 +1012,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise quotient {@code this / other}, broadcasting shapes as needed.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor div(Tensor other) {
         return DivFn.apply(this, other);
@@ -688,6 +1022,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise maximum of this tensor and {@code other}, broadcasting shapes as needed.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor max(Tensor other) {
         return MaxFn.apply(this, other);
@@ -695,6 +1032,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise minimum of this tensor and {@code other}, broadcasting shapes as needed.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor min(Tensor other) {
         return MinFn.apply(this, other);
@@ -702,6 +1042,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns this tensor with {@code other} added to every element.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor add(float other) {
         return AddConstFn.applyAdd(this, other);
@@ -709,6 +1052,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns this tensor with {@code other} subtracted from every element.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor sub(float other) {
         return AddConstFn.applySub(this, other);
@@ -716,6 +1062,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns this tensor with every element multiplied by {@code other}.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor mul(float other) {
         return MulConstFn.apply(this, other);
@@ -723,6 +1072,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns this tensor with every element divided by {@code other}.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor div(float other) {
         return DivConstFn.apply(this, other);
@@ -730,6 +1082,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise maximum of this tensor and the constant {@code other}.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor max(float other) {
         return MaxConstFn.apply(this, other);
@@ -737,6 +1092,9 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns the elementwise minimum of this tensor and the constant {@code other}.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor min(float other) {
         return MinConstFn.apply(this, other);
@@ -744,13 +1102,30 @@ public class Tensor implements Cloneable {
 
     /**
      * Returns {@code other - this} (reversed subtraction) for every element.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor rsub(float other) {
         return SubRConstFn.apply(other, this);
     }
 
     /**
+     * Returns this tensor raised to the constant power {@code p}, elementwise. Negative bases
+     * with non-integer exponents produce NaN.
+      *
+     * @param p the exponent
+     * @return the resulting tensor
+     */
+    public Tensor pow(float p) {
+        return PowConstFn.apply(this, p);
+    }
+
+    /**
      * Returns {@code other / this} (reversed division) for every element.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor rdiv(float other) {
         return DivRConstFn.apply(other, this);
@@ -759,6 +1134,9 @@ public class Tensor implements Cloneable {
     /**
      * In-place elementwise add; not usable on views or graph tensors, and the broadcast
      * result must equal this tensor's shape.
+     *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor add_(Tensor other) {
         checkInPlaceSafe();
@@ -772,6 +1150,9 @@ public class Tensor implements Cloneable {
     /**
      * In-place elementwise subtract; not usable on views or graph tensors, and the broadcast
      * result must equal this tensor's shape.
+     *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor sub_(Tensor other) {
         checkInPlaceSafe();
@@ -785,6 +1166,9 @@ public class Tensor implements Cloneable {
     /**
      * In-place elementwise multiply; not usable on views or graph tensors, and the broadcast
      * result must equal this tensor's shape.
+     *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor mul_(Tensor other) {
         checkInPlaceSafe();
@@ -798,6 +1182,9 @@ public class Tensor implements Cloneable {
     /**
      * In-place elementwise divide; not usable on views or graph tensors, and the broadcast
      * result must equal this tensor's shape.
+     *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor div_(Tensor other) {
         checkInPlaceSafe();
@@ -811,6 +1198,9 @@ public class Tensor implements Cloneable {
     /**
      * In-place elementwise maximum; not usable on views or graph tensors, and the broadcast
      * result must equal this tensor's shape.
+     *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor max_(Tensor other) {
         checkInPlaceSafe();
@@ -824,6 +1214,9 @@ public class Tensor implements Cloneable {
     /**
      * In-place elementwise minimum; not usable on views or graph tensors, and the broadcast
      * result must equal this tensor's shape.
+     *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor min_(Tensor other) {
         checkInPlaceSafe();
@@ -836,6 +1229,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place add of a constant; not usable on views or graph tensors.
+     *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor add_(float other) {
         checkInPlaceSafe();
@@ -845,6 +1241,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place subtract of a constant; not usable on views or graph tensors.
+     *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor sub_(float other) {
         checkInPlaceSafe();
@@ -854,6 +1253,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place multiply by a constant; not usable on views or graph tensors.
+     *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor mul_(float other) {
         checkInPlaceSafe();
@@ -863,6 +1265,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place divide by a constant; not usable on views or graph tensors.
+     *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor div_(float other) {
         checkInPlaceSafe();
@@ -872,6 +1277,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place elementwise maximum with a constant; not usable on views or graph tensors.
+     *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor max_(float other) {
         checkInPlaceSafe();
@@ -881,6 +1289,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place elementwise minimum with a constant; not usable on views or graph tensors.
+     *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor min_(float other) {
         checkInPlaceSafe();
@@ -890,6 +1301,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place reversed subtraction ({@code this = other - this}); not usable on views or graph tensors.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor rsub_(float other) {
         checkInPlaceSafe();
@@ -899,6 +1313,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place reversed division ({@code this = other / this}); not usable on views or graph tensors.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor rdiv_(float other) {
         checkInPlaceSafe();
@@ -941,6 +1358,9 @@ public class Tensor implements Cloneable {
     /**
      * Returns a mask tensor (1 where equal, 0 elsewhere) comparing this tensor to {@code other},
      * broadcasting shapes as needed. Not tracked by autograd.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor eq(Tensor other) {
         return compareTensor(EQ, other);
@@ -949,6 +1369,9 @@ public class Tensor implements Cloneable {
     /**
      * Returns a mask tensor (1 where {@code this < other}, 0 elsewhere), broadcasting shapes
      * as needed. Not tracked by autograd.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor lt(Tensor other) {
         return compareTensor(LT, other);
@@ -957,6 +1380,9 @@ public class Tensor implements Cloneable {
     /**
      * Returns a mask tensor (1 where {@code this <= other}, 0 elsewhere), broadcasting shapes
      * as needed. Not tracked by autograd.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor le(Tensor other) {
         return compareTensor(LE, other);
@@ -965,6 +1391,9 @@ public class Tensor implements Cloneable {
     /**
      * Returns a mask tensor (1 where {@code this > other}, 0 elsewhere), broadcasting shapes
      * as needed. Not tracked by autograd.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor gt(Tensor other) {
         return compareTensor(GT, other);
@@ -973,6 +1402,9 @@ public class Tensor implements Cloneable {
     /**
      * Returns a mask tensor (1 where {@code this >= other}, 0 elsewhere), broadcasting shapes
      * as needed. Not tracked by autograd.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor ge(Tensor other) {
         return compareTensor(GE, other);
@@ -980,6 +1412,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place equality comparison; not usable on views or graph tensors.
+     *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor eq_(Tensor other) {
         return compareTensorInPlace(EQ, other);
@@ -987,6 +1422,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place {@code <} comparison; not usable on views or graph tensors.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor lt_(Tensor other) {
         return compareTensorInPlace(LT, other);
@@ -994,6 +1432,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place {@code <=} comparison; not usable on views or graph tensors.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor le_(Tensor other) {
         return compareTensorInPlace(LE, other);
@@ -1001,6 +1442,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place {@code >} comparison; not usable on views or graph tensors.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor gt_(Tensor other) {
         return compareTensorInPlace(GT, other);
@@ -1008,6 +1452,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place {@code >=} comparison; not usable on views or graph tensors.
+      *
+     * @param other the other tensor; shapes are broadcast against each other
+     * @return the resulting tensor
      */
     public Tensor ge_(Tensor other) {
         return compareTensorInPlace(GE, other);
@@ -1016,6 +1463,9 @@ public class Tensor implements Cloneable {
     /**
      * Returns a mask tensor (1 where equal to the constant {@code other}, 0 elsewhere).
      * Not tracked by autograd.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor eq(float other) {
         return compareConst(EQ, other);
@@ -1024,6 +1474,9 @@ public class Tensor implements Cloneable {
     /**
      * Returns a mask tensor (1 where less than the constant {@code other}, 0 elsewhere).
      * Not tracked by autograd.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor lt(float other) {
         return compareConst(LT, other);
@@ -1032,6 +1485,9 @@ public class Tensor implements Cloneable {
     /**
      * Returns a mask tensor (1 where less than or equal to the constant {@code other}, 0 elsewhere).
      * Not tracked by autograd.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor le(float other) {
         return compareConst(LE, other);
@@ -1040,6 +1496,9 @@ public class Tensor implements Cloneable {
     /**
      * Returns a mask tensor (1 where greater than the constant {@code other}, 0 elsewhere).
      * Not tracked by autograd.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor gt(float other) {
         return compareConst(GT, other);
@@ -1048,6 +1507,9 @@ public class Tensor implements Cloneable {
     /**
      * Returns a mask tensor (1 where greater than or equal to the constant {@code other}, 0 elsewhere).
      * Not tracked by autograd.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor ge(float other) {
         return compareConst(GE, other);
@@ -1055,6 +1517,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place equality comparison against a constant; not usable on views or graph tensors.
+     *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor eq_(float other) {
         return compareConstInPlace(EQ, other);
@@ -1062,6 +1527,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place {@code <} comparison against a constant; not usable on views or graph tensors.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor lt_(float other) {
         return compareConstInPlace(LT, other);
@@ -1069,6 +1537,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place {@code <=} comparison against a constant; not usable on views or graph tensors.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor le_(float other) {
         return compareConstInPlace(LE, other);
@@ -1076,6 +1547,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place {@code >} comparison against a constant; not usable on views or graph tensors.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor gt_(float other) {
         return compareConstInPlace(GT, other);
@@ -1083,6 +1557,9 @@ public class Tensor implements Cloneable {
 
     /**
      * In-place {@code >=} comparison against a constant; not usable on views or graph tensors.
+      *
+     * @param other the constant to combine with each element
+     * @return the resulting tensor
      */
     public Tensor ge_(float other) {
         return compareConstInPlace(GE, other);

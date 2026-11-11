@@ -140,6 +140,52 @@ public interface F32KernelTable {
                  Storage c, int cOff,
                  Storage out, int outOff, int len);
 
+    // ---- spatial (conv / pool), NCHW layout ----
+
+    /**
+     * Computes 2D cross-correlation (what ML frameworks call "convolution"):
+     * {@code out[n,co,oh,ow] = bias[co] + sum_{c,kh,kw} input[n,c,ih,iw] * weight[co,c,kh,kw]}
+     * with {@code ih = oh*stride - padding + kh}, {@code iw = ow*stride - padding + kw}
+     * (skipping out-of-bounds positions, i.e. zero-padding).
+     */
+    void conv2d(Storage input, int inOff, int n, int cin, int h, int w,
+                Storage weight, int weightOff, int cout, int kh, int kw,
+                Storage bias, int biasOff,
+                Storage out, int outOff, int outH, int outW,
+                int stride, int padding);
+
+    /**
+     * Computes dInput, dWeight, and dBias for {@link #conv2d}, given the upstream gradient
+     * {@code gradOutput}. {@code gradInput}/{@code gradWeight}/{@code gradBias} are
+     * accumulated into and must be pre-zeroed.
+     */
+    void conv2dBackward(Storage input, int inOff, int n, int cin, int h, int w,
+                        Storage weight, int weightOff, int cout, int kh, int kw,
+                        Storage gradOutput, int gradOutOff, int outH, int outW,
+                        Storage gradInput, int gradInOff,
+                        Storage gradWeight, int gradWeightOff,
+                        Storage gradBias, int gradBiasOff,
+                        int stride, int padding);
+
+    /**
+     * Computes 2D max pooling, writing the pooled result into {@code out} and, for each
+     * output element, the flat kernel-window index ({@code 0..kernelSize*kernelSize-1}) of
+     * whichever position was the max into {@code argmax} (needed by {@link #maxPool2dBackward}).
+     */
+    void maxPool2d(Storage input, int inOff, int n, int c, int h, int w,
+                  Storage out, int outOff, Storage argmax, int argmaxOff,
+                  int outH, int outW, int kernelSize, int stride);
+
+    /**
+     * Scatters {@code gradOutput} back to the single position in each pooling window recorded
+     * by {@code argmax} from the matching {@link #maxPool2d} call. {@code gradInput} is
+     * accumulated into and must be pre-zeroed.
+     */
+    void maxPool2dBackward(Storage gradOutput, int gradOutOff, Storage argmax, int argmaxOff,
+                           int n, int c, int outH, int outW,
+                           Storage gradInput, int gradInOff, int h, int w,
+                           int kernelSize, int stride);
+
     // ---- optimizer fused kernel ----
 
     /**

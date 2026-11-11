@@ -19,6 +19,8 @@ public class Linear extends Module {
     /**
      * Creates a layer mapping {@code inFeatures} inputs to {@code outFeatures} outputs,
      * with a bias, using the default random generator.
+     * @param inFeatures the size of each input vector
+     * @param outFeatures the size of each output vector
      */
     public Linear(int inFeatures, int outFeatures) {
         this(Tensor4j.getRandom(), inFeatures, outFeatures, (float) (1.0 / Math.sqrt(inFeatures)), true);

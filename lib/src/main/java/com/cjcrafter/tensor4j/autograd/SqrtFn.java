@@ -22,11 +22,17 @@ public class SqrtFn extends TensorFunction {
 
     private final Tensor result;
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public SqrtFn(Tensor a, Tensor result) {
         super(a);
         this.result = result;
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         return new Tensor[] {

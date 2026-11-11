@@ -22,6 +22,8 @@ public class Dropout extends Module {
 
     /**
      * Creates a dropout layer where each element is zeroed with probability {@code p}.
+      *
+     * @param p the probability that each element is zeroed
      */
     public Dropout(float p) {
         this.p = p;

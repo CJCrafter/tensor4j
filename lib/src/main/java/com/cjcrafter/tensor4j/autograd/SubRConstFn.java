@@ -20,10 +20,16 @@ public class SubRConstFn extends TensorFunction {
         return applyRBinaryConst(SUB, t -> new SubRConstFn(a, t), a, b);
     }
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public SubRConstFn(float a, Tensor b) {
         super(b);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         Tensor negGrad = gradOutput.mul(-1);

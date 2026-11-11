@@ -22,10 +22,16 @@ public class MulFn extends TensorFunction {
         return applyBinary(MUL, MulFn::new, a, b);
     }
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public MulFn(Tensor a, Tensor b) {
         super(a, b);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         return new Tensor[]{

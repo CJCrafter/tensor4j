@@ -21,10 +21,16 @@ public class MaxFn extends TensorFunction {
         return applyBinary(MAX, MaxFn::new, a, b);
     }
 
+    /**
+     * Creates the backward node for this operation; prefer {@code apply} over calling this directly.
+     */
     public MaxFn(Tensor a, Tensor b) {
         super(a, b);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         // mask: 1 where a >= b, 0 elsewhere

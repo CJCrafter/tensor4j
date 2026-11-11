@@ -19,6 +19,9 @@ public class MeanFn extends TensorFunction {
         super(input);
     }
 
+    /**
+     * Computes the gradient of each input from {@code gradOutput}.
+     */
     @Override
     public Tensor[] backward(Tensor gradOutput) {
         int n = inputs[0].getShape().numel();
